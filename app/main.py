@@ -44,15 +44,24 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Application lifespan handler."""
     # Startup
     logger.info("application_starting", environment=settings.environment)
-    await init_db()
-    logger.info("database_initialized")
+    try:
+        await init_db()
+        logger.info("database_initialized")
+        app.state.db_healthy = True
+    except Exception as e:
+        logger.error("database_initialization_failed", error=str(e))
+        app.state.db_healthy = False
+        # Continue startup even if DB fails - allows health checks
 
     yield
 
     # Shutdown
     logger.info("application_shutting_down")
-    await close_db()
-    logger.info("database_closed")
+    try:
+        await close_db()
+        logger.info("database_closed")
+    except Exception as e:
+        logger.error("database_close_failed", error=str(e))
 
 
 # Create FastAPI application
@@ -80,10 +89,12 @@ app.add_middleware(
 @app.get("/health")
 async def health_check() -> dict:
     """Health check endpoint."""
+    db_healthy = getattr(app.state, "db_healthy", False)
     return {
-        "status": "healthy",
+        "status": "healthy" if db_healthy else "degraded",
         "version": settings.app_version,
         "environment": settings.environment,
+        "database": "connected" if db_healthy else "disconnected",
     }
 
 
