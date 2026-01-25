@@ -1,18 +1,9 @@
 """
 API endpoint modules
-"""
-from app.api.endpoints.checkout import router as checkout_router
-from app.api.endpoints.licenses import router as licenses_router
-from app.api.endpoints.webhooks import router as webhooks_router
-from app.api.endpoints.portal import router as portal_router
-from app.api.endpoints.usage import router as usage_router
-from app.api.endpoints.auth import router as auth_router
 
-__all__ = [
-    "checkout_router",
-    "licenses_router",
-    "webhooks_router",
-    "portal_router",
-    "usage_router",
-    "auth_router",
-]
+Routers are imported lazily by main.py to allow better error handling.
+Import directly from the specific module when needed:
+    from app.api.endpoints.auth import router as auth_router
+"""
+# Lazy imports - don't import at module level to prevent circular imports
+# and allow main.py to handle errors individually

@@ -161,11 +161,16 @@ async def health_check():
 @app.get("/")
 async def root():
     """Root endpoint with API info."""
+    # List actually loaded routes
+    loaded_routes = [route.path for route in app.routes if hasattr(route, 'path')]
+    api_routes = [r for r in loaded_routes if r.startswith('/api/')]
+
     return {
         "name": settings.app_name,
         "version": settings.app_version,
         "status": "running",
         "docs": "/docs",
+        "loaded_api_routes": api_routes,
         "endpoints": {
             "health": "/health",
             "auth": "/api/v1/auth",
