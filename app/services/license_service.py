@@ -15,11 +15,19 @@ logger = structlog.get_logger()
 
 
 # Plan limits configuration
+# Limites de requisicoes por MES (nao por dia)
 PLAN_LIMITS = {
-    PlanId.FREE: {"operations_per_day": 50, "users": 1},
-    PlanId.PROFESSIONAL: {"operations_per_day": -1, "users": 1},  # -1 = unlimited
-    PlanId.OFFICE: {"operations_per_day": -1, "users": 5},
-    PlanId.ENTERPRISE: {"operations_per_day": -1, "users": -1},
+    PlanId.FREE: {"requests_per_month": 50, "users": 1},
+    PlanId.PROFESSIONAL: {"requests_per_month": 500, "users": 1},
+    PlanId.OFFICE: {"requests_per_month": 500, "users": 5},
+    PlanId.ENTERPRISE: {"requests_per_month": -1, "users": -1},  # -1 = unlimited
+}
+
+# Precos em centavos (para referencia)
+PLAN_PRICES = {
+    PlanId.FREE: {"monthly": 0, "yearly": 0},
+    PlanId.PROFESSIONAL: {"monthly": 2990, "yearly": 29900},  # R$ 29,90/mes
+    PlanId.ENTERPRISE: {"monthly": 9990, "yearly": 99900},    # R$ 99,90/mes
 }
 
 

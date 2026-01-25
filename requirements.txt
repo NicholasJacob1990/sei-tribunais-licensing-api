@@ -19,6 +19,10 @@ python-jose[cryptography]>=3.3.0
 passlib[bcrypt]>=1.7.4
 python-multipart>=0.0.6
 
+# OAuth
+authlib>=1.3.0
+itsdangerous>=2.1.0
+
 # HTTP client
 httpx>=0.26.0
 aiohttp>=3.9.0

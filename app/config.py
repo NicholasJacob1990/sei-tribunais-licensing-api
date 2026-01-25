@@ -53,6 +53,15 @@ class Settings(BaseSettings):
     jwt_secret_key: str = "change-me-in-production"
     jwt_algorithm: str = "HS256"
     jwt_access_token_expire_minutes: int = 30
+    jwt_refresh_token_expire_days: int = 7
+
+    # Google OAuth
+    google_client_id: str = ""  # Add from Google Cloud Console
+    google_client_secret: str = ""  # Add from Google Cloud Console
+    google_redirect_uri: str = "http://localhost:8000/api/v1/auth/google/callback"
+
+    # Session secret for OAuth state
+    session_secret_key: str = "change-me-in-production-session"
 
     # CORS
     cors_origins: list[str] = ["http://localhost:3000", "https://iudex.com.br"]

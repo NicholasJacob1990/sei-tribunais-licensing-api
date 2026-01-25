@@ -18,6 +18,7 @@ from app.api.endpoints import (
     webhooks_router,
     portal_router,
     usage_router,
+    auth_router,
 )
 
 # Configure logging
@@ -44,25 +45,26 @@ logger = structlog.get_logger()
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Application lifespan handler."""
     # Startup
-    logger.info("application_starting", environment=settings.environment)
+    print(f"Starting application in {settings.environment} mode...")
+    app.state.db_healthy = False
+
     try:
         await init_db()
-        logger.info("database_initialized")
+        print("Database initialized successfully")
         app.state.db_healthy = True
     except Exception as e:
-        logger.error("database_initialization_failed", error=str(e))
-        app.state.db_healthy = False
-        # Continue startup even if DB fails - allows health checks
+        print(f"Database initialization failed: {e}")
+        # Continue startup even if DB fails
 
     yield
 
     # Shutdown
-    logger.info("application_shutting_down")
+    print("Shutting down application...")
     try:
         await close_db()
-        logger.info("database_closed")
+        print("Database closed")
     except Exception as e:
-        logger.error("database_close_failed", error=str(e))
+        print(f"Database close failed: {e}")
 
 
 # Create FastAPI application
@@ -116,6 +118,7 @@ app.include_router(licenses_router, prefix="/api/v1")
 app.include_router(webhooks_router, prefix="/api/v1")
 app.include_router(portal_router, prefix="/api/v1")
 app.include_router(usage_router, prefix="/api/v1")
+app.include_router(auth_router, prefix="/api/v1")
 
 
 if __name__ == "__main__":
