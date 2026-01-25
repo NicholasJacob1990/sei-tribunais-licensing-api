@@ -20,11 +20,17 @@ class Base(DeclarativeBase):
 
 
 # Create async engine
+# Add SSL config for Render PostgreSQL (requires SSL)
+connect_args = {}
+if settings.is_production:
+    connect_args["ssl"] = "require"
+
 engine = create_async_engine(
     settings.async_database_url,
     pool_size=settings.database_pool_size,
     max_overflow=settings.database_max_overflow,
     echo=settings.debug,
+    connect_args=connect_args,
 )
 
 # Create session factory
