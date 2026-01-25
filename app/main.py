@@ -5,43 +5,40 @@ API de licenciamento para SEI-MCP e Tribunais-MCP.
 Gerencia assinaturas, checkout Stripe, autenticacao Google OAuth.
 """
 from contextlib import asynccontextmanager
+import logging
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-import structlog
 
 from app.config import settings
 from app.database import init_db, close_db
 
-
-# Configure structlog
-structlog.configure(
-    processors=[
-        structlog.stdlib.filter_by_level,
-        structlog.stdlib.add_logger_name,
-        structlog.stdlib.add_log_level,
-        structlog.processors.TimeStamper(fmt="iso"),
-        structlog.processors.JSONRenderer(),
-    ],
-    wrapper_class=structlog.stdlib.BoundLogger,
-    context_class=dict,
-    logger_factory=structlog.stdlib.LoggerFactory(),
-    cache_logger_on_first_use=True,
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO if not settings.debug else logging.DEBUG,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
 )
-
-logger = structlog.get_logger()
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan manager."""
     # Startup
-    logger.info("starting_app", version=settings.app_version, env=settings.environment)
-    await init_db()
+    logger.info(f"Starting app version={settings.app_version} env={settings.environment}")
+    try:
+        await init_db()
+        logger.info("Database initialized")
+    except Exception as e:
+        logger.error(f"Database init error: {e}")
+        # Continue anyway - health check will show status
     yield
     # Shutdown
-    logger.info("shutting_down_app")
-    await close_db()
+    logger.info("Shutting down app")
+    try:
+        await close_db()
+    except Exception as e:
+        logger.error(f"Database close error: {e}")
 
 
 # Create app
@@ -50,24 +47,21 @@ app = FastAPI(
     version=settings.app_version,
     description="API de licenciamento para extensoes Chrome SEI-MCP e Tribunais-MCP",
     lifespan=lifespan,
-    docs_url="/docs" if not settings.is_production else None,
-    redoc_url="/redoc" if not settings.is_production else None,
+    docs_url="/docs",
+    redoc_url="/redoc",
 )
 
-# CORS
+# CORS - allow all in dev
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.cors_origins + ["*"] if not settings.is_production else settings.cors_origins,
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-
-# Include routers - lazy import to avoid import-time errors
-@app.on_event("startup")
-async def include_routers():
-    """Include routers after startup to ensure all dependencies are ready."""
+# Include routers at module load time
+try:
     from app.api.endpoints import (
         auth_router,
         checkout_router,
@@ -76,15 +70,15 @@ async def include_routers():
         usage_router,
         webhooks_router,
     )
-
     app.include_router(auth_router, prefix="/api/v1")
     app.include_router(checkout_router, prefix="/api/v1")
     app.include_router(licenses_router, prefix="/api/v1")
     app.include_router(portal_router, prefix="/api/v1")
     app.include_router(usage_router, prefix="/api/v1")
     app.include_router(webhooks_router, prefix="/api/v1")
-
-    logger.info("routers_included")
+    logger.info("Routers included successfully")
+except Exception as e:
+    logger.error(f"Failed to include routers: {e}")
 
 
 @app.get("/health")
@@ -104,7 +98,7 @@ async def root():
         "name": settings.app_name,
         "version": settings.app_version,
         "status": "running",
-        "docs": "/docs" if not settings.is_production else "disabled",
+        "docs": "/docs",
         "endpoints": {
             "health": "/health",
             "auth": "/api/v1/auth",

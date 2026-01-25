@@ -93,35 +93,24 @@ PLAN_CONFIGS: dict[PlanId, PlanConfig] = {
 }
 
 
-# Price IDs mapping - SUBSTITUA pelos IDs reais do Stripe Dashboard
+# Price IDs mapping - Configurados via variaveis de ambiente ou hardcoded
 # Formato: price_XXXXXXX
+# Para configurar via ENV: STRIPE_PRICE_PROFESSIONAL_MONTHLY=price_xxx
+import os
+
+def _get_price_id(key: str, default: str = "") -> str:
+    """Get price ID from environment variable or return default."""
+    env_key = f"STRIPE_PRICE_{key.upper()}"
+    return os.getenv(env_key, default)
+
 PRICE_IDS: dict[str, dict[str, str]] = {
-    # Produto principal (pode ser o unico se voce tiver apenas um produto)
+    # Produto principal (Iudex API)
     "default": {
         # FREE nao precisa de price_id (nao tem cobranca)
-        "professional_monthly": "price_professional_monthly",  # Substitua pelo ID real
-        "professional_yearly": "price_professional_yearly",    # Substitua pelo ID real
-        "enterprise_monthly": "price_enterprise_monthly",      # Substitua pelo ID real
-        "enterprise_yearly": "price_enterprise_yearly",        # Substitua pelo ID real
-    },
-    # Mantem compatibilidade com produtos existentes
-    "tribunais-mcp": {
-        "professional_monthly": "price_tribunais_pro_monthly",
-        "professional_yearly": "price_tribunais_pro_yearly",
-        "enterprise_monthly": "price_tribunais_enterprise_monthly",
-        "enterprise_yearly": "price_tribunais_enterprise_yearly",
-    },
-    "sei-mcp": {
-        "professional_monthly": "price_sei_pro_monthly",
-        "professional_yearly": "price_sei_pro_yearly",
-        "enterprise_monthly": "price_sei_enterprise_monthly",
-        "enterprise_yearly": "price_sei_enterprise_yearly",
-    },
-    "bundle": {
-        "professional_monthly": "price_bundle_pro_monthly",
-        "professional_yearly": "price_bundle_pro_yearly",
-        "enterprise_monthly": "price_bundle_enterprise_monthly",
-        "enterprise_yearly": "price_bundle_enterprise_yearly",
+        "professional_monthly": _get_price_id("PROFESSIONAL_MONTHLY", "price_professional_monthly"),
+        "professional_yearly": _get_price_id("PROFESSIONAL_YEARLY", "price_professional_yearly"),
+        "enterprise_monthly": _get_price_id("ENTERPRISE_MONTHLY", "price_enterprise_monthly"),
+        "enterprise_yearly": _get_price_id("ENTERPRISE_YEARLY", "price_enterprise_yearly"),
     },
 }
 

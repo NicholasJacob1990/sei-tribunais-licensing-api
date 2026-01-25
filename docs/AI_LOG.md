@@ -138,3 +138,51 @@ stripe trigger checkout.session.completed
 - Plano FREE criado sem checkout (direto no banco)
 - Trial de 7 dias apenas para Professional
 - Enterprise sem trial (cliente deve falar com vendas)
+
+---
+
+## 2026-01-25 - Setup Automatizado Stripe Products
+
+### Objetivo
+Criar script automatizado para configurar produtos e precos no Stripe.
+
+### Arquivos Criados
+- `scripts/setup_stripe_products.py` - Script para criar produtos/precos no Stripe
+- `docs/STRIPE_SETUP.md` - Documentacao completa do setup Stripe
+
+### Arquivos Alterados
+- `app/services/stripe_service.py` - Price IDs agora carregam de variaveis de ambiente
+
+### Funcionalidades do Script
+1. Cria produtos automaticamente (Professional, Enterprise)
+2. Cria precos mensais e anuais para cada plano
+3. Usa lookup_keys para identificar precos
+4. Verifica produtos/precos existentes antes de criar
+5. Gera codigo para atualizar stripe_service.py
+6. Lista variaveis de ambiente necessarias
+
+### Variaveis de Ambiente Novas
+```env
+STRIPE_PRICE_PROFESSIONAL_MONTHLY=price_xxx
+STRIPE_PRICE_PROFESSIONAL_YEARLY=price_xxx
+STRIPE_PRICE_ENTERPRISE_MONTHLY=price_xxx
+STRIPE_PRICE_ENTERPRISE_YEARLY=price_xxx
+```
+
+### Como Usar
+```bash
+# Via argumento
+python scripts/setup_stripe_products.py --api-key sk_test_xxx
+
+# Via variavel de ambiente
+STRIPE_SECRET_KEY=sk_test_xxx python scripts/setup_stripe_products.py
+
+# Via .env
+python scripts/setup_stripe_products.py
+```
+
+### Proximos Passos
+1. Executar script com API key de teste
+2. Configurar webhook no Stripe Dashboard
+3. Configurar variaveis no Render
+4. Testar checkout com cartao de teste (4242 4242 4242 4242)
