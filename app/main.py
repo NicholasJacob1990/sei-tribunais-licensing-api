@@ -61,24 +61,69 @@ app.add_middleware(
 )
 
 # Include routers at module load time
-try:
-    from app.api.endpoints import (
-        auth_router,
-        checkout_router,
-        licenses_router,
-        portal_router,
-        usage_router,
-        webhooks_router,
-    )
-    app.include_router(auth_router, prefix="/api/v1")
-    app.include_router(checkout_router, prefix="/api/v1")
-    app.include_router(licenses_router, prefix="/api/v1")
-    app.include_router(portal_router, prefix="/api/v1")
-    app.include_router(usage_router, prefix="/api/v1")
-    app.include_router(webhooks_router, prefix="/api/v1")
-    logger.info("Routers included successfully")
-except Exception as e:
-    logger.error(f"Failed to include routers: {e}")
+# Import each router individually to identify which one fails
+import traceback
+
+_routers_loaded = False
+
+def load_routers():
+    global _routers_loaded
+    if _routers_loaded:
+        return
+
+    try:
+        logger.info("Loading auth_router...")
+        from app.api.endpoints.auth import router as auth_router
+        app.include_router(auth_router, prefix="/api/v1")
+        logger.info("auth_router loaded")
+    except Exception as e:
+        logger.error(f"auth_router error: {e}\n{traceback.format_exc()}")
+
+    try:
+        logger.info("Loading checkout_router...")
+        from app.api.endpoints.checkout import router as checkout_router
+        app.include_router(checkout_router, prefix="/api/v1")
+        logger.info("checkout_router loaded")
+    except Exception as e:
+        logger.error(f"checkout_router error: {e}\n{traceback.format_exc()}")
+
+    try:
+        logger.info("Loading licenses_router...")
+        from app.api.endpoints.licenses import router as licenses_router
+        app.include_router(licenses_router, prefix="/api/v1")
+        logger.info("licenses_router loaded")
+    except Exception as e:
+        logger.error(f"licenses_router error: {e}\n{traceback.format_exc()}")
+
+    try:
+        logger.info("Loading portal_router...")
+        from app.api.endpoints.portal import router as portal_router
+        app.include_router(portal_router, prefix="/api/v1")
+        logger.info("portal_router loaded")
+    except Exception as e:
+        logger.error(f"portal_router error: {e}\n{traceback.format_exc()}")
+
+    try:
+        logger.info("Loading usage_router...")
+        from app.api.endpoints.usage import router as usage_router
+        app.include_router(usage_router, prefix="/api/v1")
+        logger.info("usage_router loaded")
+    except Exception as e:
+        logger.error(f"usage_router error: {e}\n{traceback.format_exc()}")
+
+    try:
+        logger.info("Loading webhooks_router...")
+        from app.api.endpoints.webhooks import router as webhooks_router
+        app.include_router(webhooks_router, prefix="/api/v1")
+        logger.info("webhooks_router loaded")
+    except Exception as e:
+        logger.error(f"webhooks_router error: {e}\n{traceback.format_exc()}")
+
+    _routers_loaded = True
+    logger.info("All routers processed")
+
+# Load routers
+load_routers()
 
 
 @app.get("/health")
