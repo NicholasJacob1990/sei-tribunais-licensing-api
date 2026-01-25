@@ -87,9 +87,10 @@ app.add_middleware(
 import traceback
 
 _routers_loaded = False
+_router_errors = []
 
 def load_routers():
-    global _routers_loaded
+    global _routers_loaded, _router_errors
     if _routers_loaded:
         return
 
@@ -99,6 +100,8 @@ def load_routers():
         app.include_router(auth_router, prefix="/api/v1")
         logger.info("auth_router loaded")
     except Exception as e:
+        err = f"auth_router: {e}"
+        _router_errors.append(err)
         logger.error(f"auth_router error: {e}\n{traceback.format_exc()}")
 
     try:
@@ -107,6 +110,8 @@ def load_routers():
         app.include_router(checkout_router, prefix="/api/v1")
         logger.info("checkout_router loaded")
     except Exception as e:
+        err = f"checkout_router: {e}"
+        _router_errors.append(err)
         logger.error(f"checkout_router error: {e}\n{traceback.format_exc()}")
 
     try:
@@ -115,6 +120,8 @@ def load_routers():
         app.include_router(licenses_router, prefix="/api/v1")
         logger.info("licenses_router loaded")
     except Exception as e:
+        err = f"licenses_router: {e}"
+        _router_errors.append(err)
         logger.error(f"licenses_router error: {e}\n{traceback.format_exc()}")
 
     try:
@@ -123,6 +130,8 @@ def load_routers():
         app.include_router(portal_router, prefix="/api/v1")
         logger.info("portal_router loaded")
     except Exception as e:
+        err = f"portal_router: {e}"
+        _router_errors.append(err)
         logger.error(f"portal_router error: {e}\n{traceback.format_exc()}")
 
     try:
@@ -131,6 +140,8 @@ def load_routers():
         app.include_router(usage_router, prefix="/api/v1")
         logger.info("usage_router loaded")
     except Exception as e:
+        err = f"usage_router: {e}"
+        _router_errors.append(err)
         logger.error(f"usage_router error: {e}\n{traceback.format_exc()}")
 
     try:
@@ -139,10 +150,12 @@ def load_routers():
         app.include_router(webhooks_router, prefix="/api/v1")
         logger.info("webhooks_router loaded")
     except Exception as e:
+        err = f"webhooks_router: {e}"
+        _router_errors.append(err)
         logger.error(f"webhooks_router error: {e}\n{traceback.format_exc()}")
 
     _routers_loaded = True
-    logger.info("All routers processed")
+    logger.info(f"All routers processed. Errors: {len(_router_errors)}")
 
 # Load routers
 load_routers()
@@ -155,6 +168,18 @@ async def health_check():
         "status": "healthy",
         "version": settings.app_version,
         "environment": settings.environment,
+    }
+
+
+@app.get("/debug/routers")
+async def debug_routers():
+    """Debug endpoint to check router loading errors."""
+    loaded_routes = [route.path for route in app.routes if hasattr(route, 'path')]
+    api_routes = [r for r in loaded_routes if r.startswith('/api/')]
+    return {
+        "loaded_api_routes": api_routes,
+        "router_errors": _router_errors,
+        "total_errors": len(_router_errors),
     }
 
 
