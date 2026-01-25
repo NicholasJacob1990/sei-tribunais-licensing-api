@@ -8,6 +8,7 @@ from collections.abc import AsyncGenerator
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import structlog
+import logging
 
 from app.config import settings
 from app.database import init_db, close_db
@@ -19,20 +20,20 @@ from app.api.endpoints import (
     usage_router,
 )
 
-# Configure structured logging
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+
+# Simple structlog config
 structlog.configure(
     processors=[
-        structlog.stdlib.filter_by_level,
-        structlog.stdlib.add_logger_name,
-        structlog.stdlib.add_log_level,
+        structlog.processors.add_log_level,
         structlog.processors.TimeStamper(fmt="iso"),
-        structlog.processors.StackInfoRenderer(),
-        structlog.processors.format_exc_info,
-        structlog.processors.JSONRenderer() if settings.is_production else structlog.dev.ConsoleRenderer(),
+        structlog.dev.ConsoleRenderer(),
     ],
-    wrapper_class=structlog.stdlib.BoundLogger,
-    context_class=dict,
-    logger_factory=structlog.stdlib.LoggerFactory(),
+    logger_factory=structlog.PrintLoggerFactory(),
     cache_logger_on_first_use=True,
 )
 
