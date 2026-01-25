@@ -2,86 +2,64 @@
 Iudex Licensing API - Main Application
 FastAPI application for managing licenses and Stripe integration
 """
+import os
+import sys
 from contextlib import asynccontextmanager
 from collections.abc import AsyncGenerator
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-import structlog
-import logging
 
-from app.config import settings
-from app.database import init_db, close_db
-from app.api.endpoints import (
-    checkout_router,
-    licenses_router,
-    webhooks_router,
-    portal_router,
-    usage_router,
-    auth_router,
-)
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-
-# Simple structlog config
-structlog.configure(
-    processors=[
-        structlog.processors.add_log_level,
-        structlog.processors.TimeStamper(fmt="iso"),
-        structlog.dev.ConsoleRenderer(),
-    ],
-    logger_factory=structlog.PrintLoggerFactory(),
-    cache_logger_on_first_use=True,
-)
-
-logger = structlog.get_logger()
+# Print debug info
+print(f"Python version: {sys.version}")
+print(f"Environment: {os.environ.get('ENVIRONMENT', 'development')}")
+print(f"DATABASE_URL set: {bool(os.environ.get('DATABASE_URL'))}")
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Application lifespan handler."""
-    # Startup
-    print(f"Starting application in {settings.environment} mode...")
-    app.state.db_healthy = False
+    print("Starting application...")
 
+    # Lazy import to avoid import-time errors
     try:
+        from app.config import settings
+        print(f"Config loaded - environment: {settings.environment}")
+
+        from app.database import init_db, close_db
         await init_db()
-        print("Database initialized successfully")
+        print("Database initialized")
         app.state.db_healthy = True
     except Exception as e:
-        print(f"Database initialization failed: {e}")
-        # Continue startup even if DB fails
+        print(f"Startup error: {e}")
+        import traceback
+        traceback.print_exc()
+        app.state.db_healthy = False
 
     yield
 
     # Shutdown
-    print("Shutting down application...")
+    print("Shutting down...")
     try:
+        from app.database import close_db
         await close_db()
-        print("Database closed")
     except Exception as e:
-        print(f"Database close failed: {e}")
+        print(f"Shutdown error: {e}")
 
 
 # Create FastAPI application
 app = FastAPI(
-    title=settings.app_name,
-    version=settings.app_version,
+    title="Iudex Licensing API",
+    version="1.0.0",
     description="API de licenciamento e cobranca para extensoes Iudex",
-    docs_url="/docs" if not settings.is_production else None,
-    redoc_url="/redoc" if not settings.is_production else None,
-    openapi_url="/openapi.json" if not settings.is_production else None,
     lifespan=lifespan,
 )
 
 # Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.cors_origins,
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -95,8 +73,7 @@ async def health_check() -> dict:
     db_healthy = getattr(app.state, "db_healthy", False)
     return {
         "status": "healthy" if db_healthy else "degraded",
-        "version": settings.app_version,
-        "environment": settings.environment,
+        "version": "1.0.0",
         "database": "connected" if db_healthy else "disconnected",
     }
 
@@ -106,27 +83,37 @@ async def health_check() -> dict:
 async def root() -> dict:
     """Root endpoint with API information."""
     return {
-        "name": settings.app_name,
-        "version": settings.app_version,
-        "docs": "/docs" if not settings.is_production else None,
+        "name": "Iudex Licensing API",
+        "version": "1.0.0",
     }
 
 
-# Include routers
-app.include_router(checkout_router, prefix="/api/v1")
-app.include_router(licenses_router, prefix="/api/v1")
-app.include_router(webhooks_router, prefix="/api/v1")
-app.include_router(portal_router, prefix="/api/v1")
-app.include_router(usage_router, prefix="/api/v1")
-app.include_router(auth_router, prefix="/api/v1")
+# Lazy load routers to avoid import-time errors
+@app.on_event("startup")
+async def load_routers():
+    """Load routers after startup to avoid import-time errors."""
+    try:
+        from app.api.endpoints import (
+            checkout_router,
+            licenses_router,
+            webhooks_router,
+            portal_router,
+            usage_router,
+            auth_router,
+        )
+        app.include_router(checkout_router, prefix="/api/v1")
+        app.include_router(licenses_router, prefix="/api/v1")
+        app.include_router(webhooks_router, prefix="/api/v1")
+        app.include_router(portal_router, prefix="/api/v1")
+        app.include_router(usage_router, prefix="/api/v1")
+        app.include_router(auth_router, prefix="/api/v1")
+        print("Routers loaded successfully")
+    except Exception as e:
+        print(f"Failed to load routers: {e}")
+        import traceback
+        traceback.print_exc()
 
 
 if __name__ == "__main__":
     import uvicorn
-
-    uvicorn.run(
-        "app.main:app",
-        host=settings.host,
-        port=settings.port,
-        reload=not settings.is_production,
-    )
+    uvicorn.run("app.main:app", host="0.0.0.0", port=8000, reload=True)
