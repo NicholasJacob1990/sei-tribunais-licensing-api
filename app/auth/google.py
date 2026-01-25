@@ -10,23 +10,38 @@ from itsdangerous import URLSafeTimedSerializer
 from app.config import settings
 
 
-# OAuth client configuration
-oauth = OAuth()
-
-# Register Google OAuth provider
-oauth.register(
-    name="google",
-    client_id=settings.google_client_id,
-    client_secret=settings.google_client_secret,
-    server_metadata_url="https://accounts.google.com/.well-known/openid-configuration",
-    client_kwargs={
-        "scope": "openid email profile",
-    },
-)
+# Lazy OAuth initialization
+_oauth = None
+_state_serializer = None
 
 
-# State serializer for CSRF protection
-state_serializer = URLSafeTimedSerializer(settings.session_secret_key)
+def get_oauth() -> OAuth:
+    """Get or create OAuth client."""
+    global _oauth
+    if _oauth is None:
+        _oauth = OAuth()
+        _oauth.register(
+            name="google",
+            client_id=settings.google_client_id,
+            client_secret=settings.google_client_secret,
+            server_metadata_url="https://accounts.google.com/.well-known/openid-configuration",
+            client_kwargs={
+                "scope": "openid email profile",
+            },
+        )
+    return _oauth
+
+
+def get_state_serializer() -> URLSafeTimedSerializer:
+    """Get or create state serializer."""
+    global _state_serializer
+    if _state_serializer is None:
+        _state_serializer = URLSafeTimedSerializer(settings.session_secret_key)
+    return _state_serializer
+
+
+# Backwards compatibility - use the functions directly
+# oauth and state_serializer are accessed via get_oauth() and get_state_serializer()
 
 
 def generate_state() -> str:
@@ -39,8 +54,9 @@ def generate_state() -> str:
     Returns:
         Signed state token
     """
+    serializer = get_state_serializer()
     nonce = secrets.token_urlsafe(32)
-    return state_serializer.dumps(nonce)
+    return serializer.dumps(nonce)
 
 
 def verify_state(state: str, max_age: int = 600) -> bool:
@@ -55,7 +71,8 @@ def verify_state(state: str, max_age: int = 600) -> bool:
         True if state is valid, False otherwise
     """
     try:
-        state_serializer.loads(state, max_age=max_age)
+        serializer = get_state_serializer()
+        serializer.loads(state, max_age=max_age)
         return True
     except Exception:
         return False

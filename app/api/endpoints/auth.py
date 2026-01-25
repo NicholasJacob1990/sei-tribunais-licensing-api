@@ -16,7 +16,7 @@ from app.config import settings
 from app.database import get_db
 from app.models.user import User
 from app.models.license import License, ProductType
-from app.auth.google import oauth, get_google_auth_url, verify_state
+from app.auth.google import get_oauth, get_google_auth_url, verify_state
 from app.auth.jwt import (
     create_access_token,
     create_refresh_token,
@@ -136,6 +136,7 @@ async def google_callback(
 
     try:
         # Exchange code for token
+        oauth = get_oauth()
         token = await oauth.google.authorize_access_token(request)
 
         if not token:
