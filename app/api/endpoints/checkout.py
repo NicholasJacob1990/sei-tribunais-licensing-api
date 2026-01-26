@@ -34,9 +34,9 @@ router = APIRouter(prefix="/checkout", tags=["checkout"])
 class CreateCheckoutRequest(BaseModel):
     """Request body for creating a checkout session."""
     email: EmailStr = Field(..., description="Email do cliente")
-    plan: Literal["professional", "enterprise"] = Field(
+    plan: Literal["starter", "pro", "professional", "enterprise"] = Field(
         ...,
-        description="Plano: professional (R$29.90/mes) ou enterprise (R$99.90/mes)"
+        description="Plano: starter/pro (R$29.90/mes) ou professional/enterprise (R$99.90/mes)"
     )
     interval: Literal["monthly", "yearly"] = Field(
         default="monthly",
