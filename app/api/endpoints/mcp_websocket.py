@@ -30,6 +30,7 @@ class ConnectionManager:
     def __init__(self):
         self.active_connections: Dict[str, WebSocket] = {}
         self.session_metadata: Dict[str, dict] = {}
+        self.session_urls: Dict[str, str] = {}  # Tracking de URL por sessão
 
     async def connect(self, websocket: WebSocket, session_id: str, metadata: dict = None):
         """Aceita nova conexão WebSocket."""
@@ -50,7 +51,16 @@ class ConnectionManager:
             del self.active_connections[session_id]
         if session_id in self.session_metadata:
             del self.session_metadata[session_id]
+        if session_id in self.session_urls:
+            del self.session_urls[session_id]
         logger.info(f"[MCP-WS] Desconectado: {session_id}")
+
+    def update_session_url(self, session_id: str, url: str):
+        """Atualiza URL atual de uma sessão."""
+        if session_id in self.session_metadata:
+            self.session_urls[session_id] = url
+            self.session_metadata[session_id]["current_url"] = url
+            self.session_metadata[session_id]["last_activity"] = datetime.utcnow().isoformat()
 
     async def send_message(self, session_id: str, message: dict):
         """Envia mensagem para uma sessão específica."""
@@ -92,9 +102,37 @@ class ConnectionManager:
         return len(self.active_connections) > 0
 
     def get_default_session(self) -> Optional[str]:
-        """Retorna a primeira sessão disponível."""
-        if self.active_connections:
-            return next(iter(self.active_connections.keys()))
+        """Retorna a sessão mais recente/ativa."""
+        return self.get_most_recent_session()
+
+    def get_most_recent_session(self) -> Optional[str]:
+        """
+        Retorna a sessão com atividade mais recente.
+        Prioriza sessões com URL do SEI ativa.
+        """
+        if not self.active_connections:
+            return None
+
+        # Ordenar por last_activity (mais recente primeiro)
+        sessions_with_activity = []
+        for session_id in self.active_connections.keys():
+            meta = self.session_metadata.get(session_id, {})
+            last_activity = meta.get("last_activity", "")
+            current_url = meta.get("current_url", "")
+            is_sei_url = "/sei/" in current_url or "controlador.php" in current_url
+            sessions_with_activity.append((session_id, last_activity, is_sei_url))
+
+        # Priorizar: 1) URL do SEI, 2) atividade mais recente
+        sessions_with_activity.sort(key=lambda x: (not x[2], x[1]), reverse=True)
+
+        if sessions_with_activity:
+            return sessions_with_activity[0][0]
+        return None
+
+    def get_session_by_id(self, session_id: str) -> Optional[str]:
+        """Retorna session_id se válido e conectado."""
+        if session_id and session_id in self.active_connections:
+            return session_id
         return None
 
 
@@ -157,6 +195,13 @@ async def websocket_mcp_endpoint(
                         "user": event_data.get("user"),
                         "tribunal": event_data.get("tribunal"),
                     })
+
+                # Tracking de URL para page_changed
+                elif event == "page_changed":
+                    url = event_data.get("url", "")
+                    if url:
+                        manager.update_session_url(session_id, url)
+                        logger.debug(f"[MCP-WS] URL atualizada para {session_id}: {url}")
 
             elif msg_type == "response":
                 # Resposta a um comando - rotear para o MCP Server

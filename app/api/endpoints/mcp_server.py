@@ -11,6 +11,9 @@ Arquitetura:
 import asyncio
 import json
 import logging
+import os
+import platform
+import subprocess
 from datetime import datetime
 from typing import Dict, Any, Optional
 from uuid import uuid4
@@ -29,15 +32,54 @@ from app.api.endpoints.mcp_websocket import manager as ws_manager
 # Armazena respostas pendentes de comandos
 pending_responses: Dict[str, asyncio.Future] = {}
 
+# Timeout padrão configurável via env var (em ms)
+DEFAULT_TIMEOUT_MS = int(os.environ.get("SEI_MCP_COMMAND_TIMEOUT_MS", "30000"))
+
+# Campos comuns para todas as tools
+COMMON_FIELDS = {
+    "session_id": {
+        "type": "string",
+        "description": "ID da sessão específica (opcional, usa mais recente)"
+    },
+    "timeout_ms": {
+        "type": "integer",
+        "description": f"Timeout em milissegundos (padrão: {DEFAULT_TIMEOUT_MS})"
+    }
+}
+
+# Tools que são executadas localmente no servidor (não precisam de extensão)
+LOCAL_TOOLS = ["sei_open_url", "sei_get_connection_status"]
+
 # ============================================
 # Definição das Ferramentas MCP
 # ============================================
 
+def with_common_fields(schema: dict, exclude_fields: list = None) -> dict:
+    """Adiciona campos comuns (session_id, timeout_ms) ao schema."""
+    exclude = exclude_fields or []
+    props = schema.get("properties", {}).copy()
+    for field, definition in COMMON_FIELDS.items():
+        if field not in exclude:
+            props[field] = definition
+    return {**schema, "properties": props}
+
+
 MCP_TOOLS = [
+    {
+        "name": "sei_open_url",
+        "description": "Abre uma URL no navegador padrão do sistema (não requer extensão conectada)",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "url": {"type": "string", "description": "URL para abrir no navegador"}
+            },
+            "required": ["url"]
+        }
+    },
     {
         "name": "sei_login",
         "description": "Faz login no sistema SEI com usuário e senha",
-        "inputSchema": {
+        "inputSchema": with_common_fields({
             "type": "object",
             "properties": {
                 "url": {"type": "string", "description": "URL base do SEI"},
@@ -46,12 +88,12 @@ MCP_TOOLS = [
                 "orgao": {"type": "string", "description": "Órgão (opcional)"}
             },
             "required": ["url", "username", "password"]
-        }
+        })
     },
     {
         "name": "sei_search_process",
         "description": "Busca processos no SEI por número, texto, interessado ou assunto",
-        "inputSchema": {
+        "inputSchema": with_common_fields({
             "type": "object",
             "properties": {
                 "query": {"type": "string", "description": "Termo de busca"},
@@ -59,34 +101,34 @@ MCP_TOOLS = [
                 "limit": {"type": "integer", "default": 10}
             },
             "required": ["query"]
-        }
+        })
     },
     {
         "name": "sei_open_process",
         "description": "Abre/navega para um processo específico",
-        "inputSchema": {
+        "inputSchema": with_common_fields({
             "type": "object",
             "properties": {
                 "process_number": {"type": "string", "description": "Número do processo"}
             },
             "required": ["process_number"]
-        }
+        })
     },
     {
         "name": "sei_list_documents",
         "description": "Lista todos os documentos de um processo",
-        "inputSchema": {
+        "inputSchema": with_common_fields({
             "type": "object",
             "properties": {
                 "process_number": {"type": "string", "description": "Número do processo"}
             },
             "required": ["process_number"]
-        }
+        })
     },
     {
         "name": "sei_create_document",
         "description": "Cria um novo documento no processo",
-        "inputSchema": {
+        "inputSchema": with_common_fields({
             "type": "object",
             "properties": {
                 "process_number": {"type": "string"},
@@ -96,24 +138,24 @@ MCP_TOOLS = [
                 "nivel_acesso": {"type": "string", "enum": ["publico", "restrito", "sigiloso"], "default": "publico"}
             },
             "required": ["process_number", "document_type"]
-        }
+        })
     },
     {
         "name": "sei_sign_document",
         "description": "Assina documento eletronicamente",
-        "inputSchema": {
+        "inputSchema": with_common_fields({
             "type": "object",
             "properties": {
                 "document_id": {"type": "string"},
                 "password": {"type": "string"}
             },
             "required": ["document_id", "password"]
-        }
+        })
     },
     {
         "name": "sei_forward_process",
         "description": "Tramita processo para outra unidade",
-        "inputSchema": {
+        "inputSchema": with_common_fields({
             "type": "object",
             "properties": {
                 "process_number": {"type": "string"},
@@ -122,29 +164,29 @@ MCP_TOOLS = [
                 "note": {"type": "string"}
             },
             "required": ["process_number", "target_unit"]
-        }
+        })
     },
     {
         "name": "sei_get_status",
         "description": "Consulta andamento e histórico do processo",
-        "inputSchema": {
+        "inputSchema": with_common_fields({
             "type": "object",
             "properties": {
                 "process_number": {"type": "string"},
                 "include_history": {"type": "boolean", "default": True}
             },
             "required": ["process_number"]
-        }
+        })
     },
     {
         "name": "sei_screenshot",
         "description": "Captura screenshot da página atual do SEI",
-        "inputSchema": {
+        "inputSchema": with_common_fields({
             "type": "object",
             "properties": {
                 "full_page": {"type": "boolean", "default": False}
             }
-        }
+        })
     },
     {
         "name": "sei_get_connection_status",
@@ -181,15 +223,39 @@ async def handle_list_tools(params: dict) -> dict:
     }
 
 
-async def handle_call_tool(params: dict) -> dict:
-    """Handle MCP tools/call request - executa ferramenta via extensão Chrome."""
-    tool_name = params.get("name")
-    tool_args = params.get("arguments", {})
+def open_url_in_system_browser(url: str) -> dict:
+    """Abre URL no navegador padrão do sistema (execução local)."""
+    try:
+        system = platform.system().lower()
+        if system == "darwin":  # macOS
+            subprocess.Popen(["open", url])
+        elif system == "linux":
+            subprocess.Popen(["xdg-open", url])
+        elif system == "windows":
+            subprocess.Popen(["start", url], shell=True)
+        else:
+            return {"success": False, "error": f"Sistema não suportado: {system}"}
+        return {"success": True, "message": f"URL aberta no navegador: {url}"}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
 
-    logger.info(f"[MCP] Calling tool: {tool_name}")
 
-    # Verificar conexão com extensão
-    if tool_name == "sei_get_connection_status":
+async def handle_local_tool(tool_name: str, tool_args: dict) -> dict:
+    """Executa ferramentas locais (que não precisam de extensão)."""
+    if tool_name == "sei_open_url":
+        url = tool_args.get("url", "")
+        if not url:
+            return {
+                "content": [{"type": "text", "text": json.dumps({"error": "URL é obrigatória"})}],
+                "isError": True
+            }
+        result = open_url_in_system_browser(url)
+        return {
+            "content": [{"type": "text", "text": json.dumps(result, indent=2)}],
+            "isError": not result.get("success", False)
+        }
+
+    elif tool_name == "sei_get_connection_status":
         return {
             "content": [{
                 "type": "text",
@@ -201,22 +267,60 @@ async def handle_call_tool(params: dict) -> dict:
             }]
         }
 
+    return {"content": [{"type": "text", "text": "Tool local não implementada"}], "isError": True}
+
+
+async def handle_call_tool(params: dict) -> dict:
+    """Handle MCP tools/call request - executa ferramenta via extensão Chrome."""
+    tool_name = params.get("name")
+    tool_args = params.get("arguments", {})
+
+    logger.info(f"[MCP] Calling tool: {tool_name}")
+
+    # Extrair campos comuns e remover do args para envio à extensão
+    session_id = tool_args.pop("session_id", None)
+    timeout_ms = tool_args.pop("timeout_ms", DEFAULT_TIMEOUT_MS)
+    timeout_sec = timeout_ms / 1000
+
+    # Verificar se é tool local (não precisa de extensão)
+    if tool_name in LOCAL_TOOLS:
+        return await handle_local_tool(tool_name, tool_args)
+
     # Verificar se há extensão conectada
     if not ws_manager.is_connected():
+        available_sessions = ws_manager.list_sessions()
         return {
             "content": [{
                 "type": "text",
                 "text": json.dumps({
                     "error": "Nenhuma extensão Chrome conectada",
-                    "message": "Por favor, abra o SEI no Chrome e conecte a extensão SEI-MCP Bridge"
-                }, indent=2)
+                    "message": "Por favor, abra o SEI no Chrome e conecte a extensão SEI-MCP Bridge",
+                    "available_sessions": available_sessions,
+                    "tip": "Use sei_open_url para abrir o SEI no navegador sem precisar de extensão"
+                }, indent=2, ensure_ascii=False)
+            }],
+            "isError": True
+        }
+
+    # Determinar sessão: específica ou mais recente
+    target_session = ws_manager.get_session_by_id(session_id) if session_id else ws_manager.get_most_recent_session()
+
+    if not target_session:
+        return {
+            "content": [{
+                "type": "text",
+                "text": json.dumps({
+                    "error": "Sessão não encontrada",
+                    "requested_session": session_id,
+                    "available_sessions": ws_manager.list_sessions()
+                }, indent=2, ensure_ascii=False)
             }],
             "isError": True
         }
 
     # Enviar comando para extensão e aguardar resposta
     try:
-        response = await send_command_and_wait(tool_name, tool_args)
+        response = await send_command_and_wait(tool_name, tool_args, target_session, timeout_sec)
 
         if response.get("success"):
             data = response.get("data", {})
@@ -254,8 +358,10 @@ async def handle_call_tool(params: dict) -> dict:
                 "type": "text",
                 "text": json.dumps({
                     "error": "Timeout",
-                    "message": f"A extensão não respondeu em tempo hábil para {tool_name}"
-                }, indent=2)
+                    "message": f"A extensão não respondeu em {timeout_sec}s para {tool_name}",
+                    "session": target_session,
+                    "tip": "Aumente timeout_ms ou verifique se a extensão está respondendo"
+                }, indent=2, ensure_ascii=False)
             }],
             "isError": True
         }
@@ -272,7 +378,7 @@ async def handle_call_tool(params: dict) -> dict:
         }
 
 
-async def send_command_and_wait(action: str, params: dict, timeout: int = 30) -> dict:
+async def send_command_and_wait(action: str, params: dict, session_id: str = None, timeout: float = 30) -> dict:
     """Envia comando para extensão via WebSocket e aguarda resposta."""
     command_id = f"cmd_{uuid4().hex[:8]}"
 
@@ -280,17 +386,20 @@ async def send_command_and_wait(action: str, params: dict, timeout: int = 30) ->
     future = asyncio.get_event_loop().create_future()
     pending_responses[command_id] = future
 
-    # Enviar comando
-    session_id = ws_manager.get_default_session()
+    # Usar sessão especificada ou default
+    target_session = session_id or ws_manager.get_default_session()
+
     command = {
         "type": "command",
         "id": command_id,
         "action": action,
         "params": params,
-        "session_id": session_id
+        "session_id": target_session
     }
 
-    await ws_manager.send_message(session_id, command)
+    logger.debug(f"[MCP] Enviando comando {command_id} para sessão {target_session}, timeout={timeout}s")
+
+    await ws_manager.send_message(target_session, command)
 
     try:
         # Aguardar resposta com timeout
