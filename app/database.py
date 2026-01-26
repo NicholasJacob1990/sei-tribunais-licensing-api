@@ -97,39 +97,53 @@ async def get_db_context() -> AsyncGenerator[AsyncSession, None]:
 
 async def init_db() -> None:
     """Initialize database tables and run migrations."""
-    engine = get_engine()
-    async with engine.begin() as conn:
-        # Create tables if they don't exist
-        await conn.run_sync(Base.metadata.create_all)
+    import logging
+    logger = logging.getLogger(__name__)
 
-        # Run pending migrations
-        await _run_migrations(conn)
+    engine = get_engine()
+
+    # First: run migrations in a separate connection
+    try:
+        async with engine.begin() as conn:
+            await _run_migrations(conn)
+            logger.info("Migrations completed")
+    except Exception as e:
+        logger.warning(f"Migration step: {e}")
+
+    # Then: ensure tables exist
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
 
 
 async def _run_migrations(conn) -> None:
     """Run pending schema migrations."""
     from sqlalchemy import text
+    import logging
+    logger = logging.getLogger(__name__)
 
     # Migration 002: Add password_hash column and make google_id nullable
-    try:
-        # Check if password_hash column exists
-        result = await conn.execute(text("""
-            SELECT column_name FROM information_schema.columns
-            WHERE table_name = 'users' AND column_name = 'password_hash'
-        """))
-        if not result.fetchone():
-            await conn.execute(text(
-                "ALTER TABLE users ADD COLUMN password_hash VARCHAR(255)"
-            ))
+    # Check if password_hash column exists
+    result = await conn.execute(text("""
+        SELECT column_name FROM information_schema.columns
+        WHERE table_name = 'users' AND column_name = 'password_hash'
+    """))
+    if not result.fetchone():
+        logger.info("Adding password_hash column...")
+        await conn.execute(text(
+            "ALTER TABLE users ADD COLUMN password_hash VARCHAR(255)"
+        ))
 
-        # Make google_id nullable if it's not already
+    # Check if google_id is nullable
+    result = await conn.execute(text("""
+        SELECT is_nullable FROM information_schema.columns
+        WHERE table_name = 'users' AND column_name = 'google_id'
+    """))
+    row = result.fetchone()
+    if row and row[0] == 'NO':
+        logger.info("Making google_id nullable...")
         await conn.execute(text(
             "ALTER TABLE users ALTER COLUMN google_id DROP NOT NULL"
         ))
-    except Exception as e:
-        # Log but don't fail - migrations might already be applied
-        import logging
-        logging.getLogger(__name__).warning(f"Migration warning: {e}")
 
 
 async def close_db() -> None:
