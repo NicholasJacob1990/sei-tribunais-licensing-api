@@ -118,48 +118,59 @@ async def register_with_email(
     Returns:
         JWT access and refresh tokens
     """
-    # Check if email already exists
-    result = await db.execute(
-        select(User).where(User.email == request.email)
-    )
-    existing_user = result.scalar_one_or_none()
+    try:
+        # Check if email already exists
+        result = await db.execute(
+            select(User).where(User.email == request.email)
+        )
+        existing_user = result.scalar_one_or_none()
 
-    if existing_user:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Email already registered",
+        if existing_user:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Email already registered",
+            )
+
+        # Validate password
+        if len(request.password) < 6:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Password must be at least 6 characters",
+            )
+
+        # Create user
+        user = User(
+            email=request.email,
+            name=request.name or request.email.split("@")[0],
+            password_hash=hash_password(request.password),
+            last_login_at=datetime.utcnow(),
+        )
+        db.add(user)
+        await db.flush()
+
+        # Create tokens
+        access_token = create_access_token({"sub": user.id, "email": user.email})
+        refresh_token = create_refresh_token({"sub": user.id})
+
+        # Store refresh token hash
+        user.refresh_token_hash = sha256(refresh_token.encode()).hexdigest()
+        await db.commit()
+
+        return TokenResponse(
+            access_token=access_token,
+            refresh_token=refresh_token,
+            expires_in=settings.jwt_access_token_expire_minutes * 60,
         )
 
-    # Validate password
-    if len(request.password) < 6:
+    except HTTPException:
+        raise
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).error(f"Register error: {e}")
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Password must be at least 6 characters",
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Registration error: {str(e)}",
         )
-
-    # Create user
-    user = User(
-        email=request.email,
-        name=request.name or request.email.split("@")[0],
-        password_hash=hash_password(request.password),
-        last_login_at=datetime.utcnow(),
-    )
-    db.add(user)
-    await db.flush()
-
-    # Create tokens
-    access_token = create_access_token({"sub": user.id, "email": user.email})
-    refresh_token = create_refresh_token({"sub": user.id})
-
-    # Store refresh token hash
-    user.refresh_token_hash = sha256(refresh_token.encode()).hexdigest()
-    await db.commit()
-
-    return TokenResponse(
-        access_token=access_token,
-        refresh_token=refresh_token,
-        expires_in=settings.jwt_access_token_expire_minutes * 60,
-    )
 
 
 @router.post("/login", response_model=TokenResponse)
