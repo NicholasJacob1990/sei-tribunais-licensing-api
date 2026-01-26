@@ -69,3 +69,31 @@ A extensao ainda tem mais funcionalidades que o Playwright:
 1. Implementar funcoes de bloco no Playwright
 2. Adicionar upload de documentos
 3. Testes de integracao Playwright
+
+---
+
+## 2026-01-26 - Fix: Database Race Conditions e Timezone
+
+### Problema
+Extension mostrava "Database temporarily unavailable" intermitentemente
+
+### Causa Raiz
+1. Race conditions no database.py (lazy init sem lock adequado)
+2. Comparacao de datetime naive vs aware (`datetime.utcnow()` vs campos DB)
+3. Modelo `PlanLimits` com campo errado (`operations_per_day` vs `requests_per_month`)
+
+### Solucao
+1. Simplificar database.py - usar eager initialization
+2. Substituir `datetime.utcnow()` por `datetime.now(timezone.utc)`
+3. Corrigir modelo PlanLimits
+
+### Arquivos Alterados
+- `app/database.py` - Simplificado (38 linhas vs 185)
+- `app/services/license_service.py` - Timezone-aware datetimes
+- `app/models/license.py` - Timezone-aware em days_remaining
+- `app/api/endpoints/licenses.py` - Campo correto em PlanLimits
+
+### Configuracao Remote MCP
+- URL: `https://sei-tribunais-licensing-api.onrender.com`
+- OAuth: `/oauth/authorize`, `/oauth/token`, `/oauth/register`
+- API Token: `sei_b4d630e6d79cf61845c7adf91ff6291fd5b7a5c62d87b91f5fad2ed13e3f50a3`
