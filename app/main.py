@@ -243,6 +243,19 @@ async def debug_get_db_test():
     return results
 
 
+from fastapi import Depends
+from sqlalchemy.ext.asyncio import AsyncSession
+from app.database import get_db
+
+
+@app.get("/debug/get-db-depends")
+async def debug_get_db_depends(db: AsyncSession = Depends(get_db)):
+    """Test get_db as FastAPI dependency."""
+    from sqlalchemy import text
+    result = await db.execute(text("SELECT 1"))
+    return {"status": "OK", "result": result.scalar()}
+
+
 @app.get("/debug/routers")
 async def debug_routers():
     """Debug endpoint to check router loading errors."""
