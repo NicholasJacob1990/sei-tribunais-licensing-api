@@ -1,14 +1,11 @@
 """
 Database configuration and session management
 
-Includes automatic connection recovery for Render free tier database restarts.
+Simplified version - uses pool_pre_ping for connection health checks.
 """
-import asyncio
 import logging
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from functools import wraps
-from typing import TypeVar, Callable, Any
 
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
@@ -16,11 +13,6 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 from sqlalchemy.orm import DeclarativeBase
-from sqlalchemy.exc import (
-    OperationalError,
-    InterfaceError,
-    DisconnectionError,
-)
 
 from app.config import settings
 
@@ -32,214 +24,75 @@ class Base(DeclarativeBase):
     pass
 
 
-# Lazy initialization of engine and session factory
-_engine = None
-_async_session_factory = None
-_engine_lock = asyncio.Lock()
-
-# Connection error patterns that indicate stale connections
-CONNECTION_ERROR_PATTERNS = [
-    "connection was closed",
-    "connection is closed",
-    "server closed the connection",
-    "connection refused",
-    "connection reset",
-    "connection timed out",
-    "terminating connection",
-    "cannot allocate memory",
-    "too many connections",
-]
-
-
-def _is_connection_error(error: Exception) -> bool:
-    """Check if an exception is a connection-related error."""
-    error_str = str(error).lower()
-    return any(pattern in error_str for pattern in CONNECTION_ERROR_PATTERNS)
-
-
 def _create_engine():
     """Create a new database engine."""
     connect_args = {}
-    # Only use SSL for external connections (hostname with .render.com)
     db_url = settings.async_database_url
+
+    # Only use SSL for external Render connections
     if settings.is_production and ".render.com" in db_url:
         connect_args["ssl"] = "require"
 
+    logger.info(f"Creating database engine (production={settings.is_production})")
+
     return create_async_engine(
-        settings.async_database_url,
+        db_url,
         pool_size=settings.database_pool_size,
         max_overflow=settings.database_max_overflow,
-        pool_pre_ping=True,  # Verify connection before using
-        pool_recycle=60,     # Recycle connections after 1 min (was 5)
-        pool_timeout=30,     # Timeout waiting for connection
+        pool_pre_ping=True,   # Auto-recover stale connections
+        pool_recycle=300,     # Recycle connections every 5 min
+        pool_timeout=30,      # Wait up to 30s for connection
         echo=settings.debug,
         connect_args=connect_args,
     )
 
 
+# Initialize at module load time (eager initialization)
+engine = _create_engine()
+
+async_session_factory = async_sessionmaker(
+    engine,
+    class_=AsyncSession,
+    expire_on_commit=False,
+    autoflush=False,
+)
+
+
 def get_engine():
-    """Get or create the database engine."""
-    global _engine
-    if _engine is None:
-        _engine = _create_engine()
-    return _engine
-
-
-async def reset_engine():
-    """Dispose and recreate the engine (for connection recovery)."""
-    global _engine, _async_session_factory
-
-    async with _engine_lock:
-        if _engine is not None:
-            logger.warning("Disposing stale database engine...")
-            try:
-                await _engine.dispose()
-            except Exception as e:
-                logger.error(f"Error disposing engine: {e}")
-            _engine = None
-            _async_session_factory = None
-
-        # Recreate engine
-        _engine = _create_engine()
-        _async_session_factory = async_sessionmaker(
-            _engine,
-            class_=AsyncSession,
-            expire_on_commit=False,
-            autoflush=False,
-        )
-        logger.info("Database engine recreated successfully")
+    """Get the database engine."""
+    return engine
 
 
 def get_session_factory():
-    """Get or create the session factory."""
-    global _async_session_factory
-    if _async_session_factory is None:
-        _async_session_factory = async_sessionmaker(
-            get_engine(),
-            class_=AsyncSession,
-            expire_on_commit=False,
-            autoflush=False,
-        )
-    return _async_session_factory
-
-
-# Keep backwards compatibility
-@property
-def engine():
-    return get_engine()
-
-
-@property
-def async_session_factory():
-    return get_session_factory()
+    """Get the session factory."""
+    return async_session_factory
 
 
 async def get_db() -> AsyncGenerator[AsyncSession, None]:
     """
-    Dependency for getting database sessions with automatic retry.
+    FastAPI dependency for database sessions.
 
-    On connection errors, disposes the engine and retries with a fresh connection.
+    Uses pool_pre_ping for automatic connection recovery.
     """
-    from fastapi import HTTPException
-
-    max_retries = 3
-    retry_delay = 1.0
-    last_error = None
-
-    logger.debug("get_db called")
-
-    for attempt in range(max_retries):
-        factory = get_session_factory()
-        logger.debug(f"get_db attempt {attempt + 1}/{max_retries}")
+    async with async_session_factory() as session:
         try:
-            async with factory() as session:
-                # Test the connection first
-                from sqlalchemy import text
-                await session.execute(text("SELECT 1"))
-                logger.debug("get_db connection test passed")
-
-                try:
-                    yield session
-                    await session.commit()
-                    logger.debug("get_db commit successful")
-                except Exception as e:
-                    logger.warning(f"get_db rollback due to: {e}")
-                    await session.rollback()
-                    raise
-                return  # Success, exit the retry loop
-
-        except (OperationalError, InterfaceError, DisconnectionError) as e:
-            last_error = e
-            logger.warning(f"get_db DB error (attempt {attempt + 1}): {type(e).__name__}: {e}")
-            if _is_connection_error(e) and attempt < max_retries - 1:
-                await reset_engine()
-                await asyncio.sleep(retry_delay * (attempt + 1))
-            else:
-                break
-        except Exception as e:
-            last_error = e
-            logger.warning(f"get_db other error (attempt {attempt + 1}): {type(e).__name__}: {e}")
-            if _is_connection_error(e) and attempt < max_retries - 1:
-                await reset_engine()
-                await asyncio.sleep(retry_delay * (attempt + 1))
-            else:
-                break
-
-    # All retries failed - raise HTTP exception
-    logger.error(f"Database connection failed after {max_retries} attempts: {last_error}")
-    raise HTTPException(
-        status_code=503,
-        detail=f"Database temporarily unavailable. Please try again in a few seconds."
-    )
+            yield session
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            raise
 
 
 @asynccontextmanager
 async def get_db_context() -> AsyncGenerator[AsyncSession, None]:
-    """Context manager for database sessions with automatic retry."""
-    max_retries = 3
-    retry_delay = 1.0
-    last_error = None
-
-    for attempt in range(max_retries):
-        factory = get_session_factory()
+    """Context manager for database sessions (for use outside FastAPI)."""
+    async with async_session_factory() as session:
         try:
-            async with factory() as session:
-                # Test the connection first
-                from sqlalchemy import text
-                await session.execute(text("SELECT 1"))
-
-                try:
-                    yield session
-                    await session.commit()
-                except Exception:
-                    await session.rollback()
-                    raise
-                return  # Success, exit the retry loop
-
-        except (OperationalError, InterfaceError, DisconnectionError) as e:
-            last_error = e
-            if _is_connection_error(e) and attempt < max_retries - 1:
-                logger.warning(
-                    f"Connection error (attempt {attempt + 1}/{max_retries}): {e}"
-                )
-                await reset_engine()
-                await asyncio.sleep(retry_delay * (attempt + 1))
-            else:
-                break
-        except Exception as e:
-            last_error = e
-            if _is_connection_error(e) and attempt < max_retries - 1:
-                logger.warning(
-                    f"Connection error (attempt {attempt + 1}/{max_retries}): {e}"
-                )
-                await reset_engine()
-                await asyncio.sleep(retry_delay * (attempt + 1))
-            else:
-                break
-
-    # All retries failed
-    logger.error(f"Database connection failed after {max_retries} attempts: {last_error}")
-    raise RuntimeError(f"Database temporarily unavailable: {last_error}")
+            yield session
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            raise
 
 
 async def init_db() -> None:
