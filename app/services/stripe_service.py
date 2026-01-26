@@ -114,14 +114,14 @@ def _get_price_id(key: str, default: str = "") -> str:
     return os.getenv(env_key, default)
 
 PRICE_IDS: dict[str, dict[str, str]] = {
-    # Produto principal (Iudex API)
+    # Produto principal (Iudex API) - LIVE MODE
     "default": {
-        # Novos planos
-        "starter_monthly": _get_price_id("STARTER_MONTHLY", "price_1SteltCvEJFyzDT1mPf9asRT"),
-        "starter_yearly": _get_price_id("STARTER_YEARLY", ""),
-        "pro_monthly": _get_price_id("PRO_MONTHLY", "price_1Stem7CvEJFyzDT1LfkUxlQA"),
-        "pro_yearly": _get_price_id("PRO_YEARLY", ""),
-        # Legacy (mantidos para compatibilidade)
+        # Novos planos (live mode)
+        "starter_monthly": _get_price_id("STARTER_MONTHLY", "price_1SttjdCvEJFyzDT1WMwiMuGp"),
+        "starter_yearly": _get_price_id("STARTER_YEARLY", "price_1Sttk0CvEJFyzDT1vGSri3Qo"),
+        "pro_monthly": _get_price_id("PRO_MONTHLY", "price_1SttkmCvEJFyzDT1VjDV3prc"),
+        "pro_yearly": _get_price_id("PRO_YEARLY", "price_1SttlQCvEJFyzDT14IoZB6cB"),
+        # Legacy (mantidos para compatibilidade - live mode)
         "professional_monthly": _get_price_id("PROFESSIONAL_MONTHLY", "price_1Stbk5CvEJFyzDT1jUZofSDM"),
         "professional_yearly": _get_price_id("PROFESSIONAL_YEARLY", "price_1Stbk6CvEJFyzDT1gucqDDtL"),
         "enterprise_monthly": _get_price_id("ENTERPRISE_MONTHLY", "price_1Stbk7CvEJFyzDT1Ol3ucCbI"),
