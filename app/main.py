@@ -154,6 +154,16 @@ def load_routers():
         _router_errors.append(err)
         logger.error(f"webhooks_router error: {e}\n{traceback.format_exc()}")
 
+    try:
+        logger.info("Loading mcp_websocket_router...")
+        from app.api.endpoints.mcp_websocket import router as mcp_websocket_router
+        app.include_router(mcp_websocket_router)
+        logger.info("mcp_websocket_router loaded")
+    except Exception as e:
+        err = f"mcp_websocket_router: {e}"
+        _router_errors.append(err)
+        logger.error(f"mcp_websocket_router error: {e}\n{traceback.format_exc()}")
+
     _routers_loaded = True
     logger.info(f"All routers processed. Errors: {len(_router_errors)}")
 
