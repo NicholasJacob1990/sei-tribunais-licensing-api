@@ -203,6 +203,88 @@ async def debug_routers():
     }
 
 
+@app.get("/debug/db-schema")
+async def debug_db_schema():
+    """Debug endpoint to check database schema."""
+    from sqlalchemy import text
+    from app.database import get_session_factory
+
+    factory = get_session_factory()
+    async with factory() as session:
+        try:
+            # Check columns in users table
+            result = await session.execute(text("""
+                SELECT column_name, data_type, is_nullable
+                FROM information_schema.columns
+                WHERE table_name = 'users'
+                ORDER BY ordinal_position
+            """))
+            columns = [{"name": r[0], "type": r[1], "nullable": r[2]} for r in result.fetchall()]
+
+            # Check if api_token_hash column exists
+            has_api_token = any(c["name"] == "api_token_hash" for c in columns)
+
+            return {
+                "columns": columns,
+                "has_api_token_hash": has_api_token,
+                "column_count": len(columns),
+            }
+        except Exception as e:
+            return {"error": str(e)}
+
+
+@app.post("/debug/run-migration")
+async def run_migration_manually():
+    """Debug endpoint to manually run migrations."""
+    from sqlalchemy import text
+    from app.database import get_session_factory
+
+    factory = get_session_factory()
+    results = []
+
+    async with factory() as session:
+        try:
+            # Check and add api_token_hash column
+            result = await session.execute(text("""
+                SELECT column_name FROM information_schema.columns
+                WHERE table_name = 'users' AND column_name = 'api_token_hash'
+            """))
+            if not result.fetchone():
+                await session.execute(text(
+                    "ALTER TABLE users ADD COLUMN api_token_hash VARCHAR(255)"
+                ))
+                results.append("Added api_token_hash column")
+
+            # Check and add api_token_created_at column
+            result = await session.execute(text("""
+                SELECT column_name FROM information_schema.columns
+                WHERE table_name = 'users' AND column_name = 'api_token_created_at'
+            """))
+            if not result.fetchone():
+                await session.execute(text(
+                    "ALTER TABLE users ADD COLUMN api_token_created_at TIMESTAMP WITH TIME ZONE"
+                ))
+                results.append("Added api_token_created_at column")
+
+            # Create index
+            try:
+                await session.execute(text(
+                    "CREATE INDEX IF NOT EXISTS idx_users_api_token_hash ON users(api_token_hash)"
+                ))
+                results.append("Index created/verified")
+            except Exception as e:
+                results.append(f"Index: {e}")
+
+            await session.commit()
+
+            if not results:
+                results.append("All columns already exist")
+
+            return {"success": True, "results": results}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+
 @app.get("/")
 async def root():
     """Root endpoint with API info."""
