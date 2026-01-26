@@ -127,6 +127,17 @@ class UserWithLicensesResponse(BaseModel):
 # ============================================================================
 
 
+@router.post("/register-test")
+async def register_test(
+    request: RegisterRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Simple test endpoint."""
+    from sqlalchemy import text
+    await db.execute(text("SELECT 1"))
+    return {"status": "OK", "email": request.email}
+
+
 @router.post("/register", response_model=TokenResponse)
 async def register_with_email(
     request: RegisterRequest,
