@@ -3,18 +3,30 @@ MCP WebSocket Endpoint
 
 Permite que extensões Chrome se conectem ao servidor MCP via WebSocket.
 A extensão envia comandos e recebe respostas para automação do SEI/Tribunais.
+
+OTIMIZADO: Retry com backoff, timeout handling, resposta assíncrona
 """
 
+import asyncio
 import json
 import logging
 from datetime import datetime
-from typing import Dict, Optional
+from typing import Dict, Optional, Any
 from uuid import uuid4
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Depends, Query
 from fastapi.websockets import WebSocketState
 
 logger = logging.getLogger(__name__)
+
+# Retry configuration
+DEFAULT_MAX_RETRIES = 3
+RETRY_BASE_DELAY = 0.5  # seconds
+RETRY_MAX_DELAY = 4.0  # seconds
+RETRYABLE_ERRORS = ['timeout', 'connection', 'reset']
+
+# Pending responses storage
+pending_responses: Dict[str, asyncio.Future] = {}
 
 router = APIRouter(prefix="/ws", tags=["MCP WebSocket"])
 
@@ -204,17 +216,13 @@ async def websocket_mcp_endpoint(
                         logger.debug(f"[MCP-WS] URL atualizada para {session_id}: {url}")
 
             elif msg_type == "response":
-                # Resposta a um comando - rotear para o MCP Server
+                # Resposta a um comando - rotear para futures pendentes
                 cmd_id = data.get("id")
                 success = data.get("success", False)
                 logger.debug(f"[MCP-WS] Resposta de {session_id} para {cmd_id}: success={success}")
 
-                # Rotear resposta para o MCP Server
-                try:
-                    from app.api.endpoints.mcp_server import receive_response
-                    receive_response(cmd_id, data)
-                except ImportError:
-                    logger.warning("[MCP-WS] mcp_server não disponível para rotear resposta")
+                # Resolver future pendente
+                receive_response(cmd_id, data)
 
             elif msg_type == "register":
                 # Registro da extensão com informações adicionais
@@ -258,24 +266,89 @@ async def mcp_status():
     }
 
 
+def receive_response(command_id: str, response: dict):
+    """
+    Recebe resposta de um comando da extensão.
+    Chamado pelo handler de mensagens WebSocket.
+    """
+    if command_id in pending_responses:
+        future = pending_responses.pop(command_id)
+        if not future.done():
+            future.set_result(response)
+
+
+def _is_retryable_error(error: str) -> bool:
+    """Check if error message indicates a retryable error."""
+    error_lower = error.lower()
+    return any(e in error_lower for e in RETRYABLE_ERRORS)
+
+
+def _get_retry_delay(attempt: int) -> float:
+    """Calculate delay with exponential backoff and jitter."""
+    import random
+    delay = min(RETRY_BASE_DELAY * (2 ** attempt), RETRY_MAX_DELAY)
+    jitter = delay * 0.2 * (random.random() - 0.5)
+    return delay + jitter
+
+
 # Função para enviar comando para extensão (usado pelo MCP server)
 async def send_command_to_extension(
     action: str,
     params: dict,
     session_id: str = None,
-    timeout: int = 30
+    timeout: int = 30,
+    max_retries: int = DEFAULT_MAX_RETRIES
 ) -> dict:
     """
     Envia comando para uma extensão Chrome conectada.
+
+    OTIMIZADO: Retry com backoff exponencial e espera por resposta.
 
     Args:
         action: Nome da ação (sei_login, sei_search_process, etc.)
         params: Parâmetros do comando
         session_id: ID da sessão específica (opcional, usa default)
         timeout: Timeout em segundos
+        max_retries: Número máximo de tentativas
 
     Returns:
         Resposta da extensão
+    """
+    last_error = None
+
+    for attempt in range(max_retries + 1):
+        try:
+            return await _send_command_once(action, params, session_id, timeout)
+        except Exception as e:
+            last_error = str(e)
+
+            # Don't retry non-retryable errors
+            if not _is_retryable_error(last_error):
+                break
+
+            # Don't retry on last attempt
+            if attempt < max_retries:
+                delay = _get_retry_delay(attempt)
+                logger.warning(
+                    f"[MCP-WS] Command failed, retrying in {delay:.2f}s "
+                    f"(attempt {attempt + 1}/{max_retries}): {action}"
+                )
+                await asyncio.sleep(delay)
+
+    return {
+        "success": False,
+        "error": last_error or f"Command failed after {max_retries} retries: {action}"
+    }
+
+
+async def _send_command_once(
+    action: str,
+    params: dict,
+    session_id: str = None,
+    timeout: int = 30
+) -> dict:
+    """
+    Envia um único comando (sem retry).
     """
     target_session = session_id or manager.get_default_session()
 
@@ -291,7 +364,7 @@ async def send_command_to_extension(
             "error": f"Sessão não conectada: {target_session}"
         }
 
-    command_id = f"cmd_{uuid4().hex[:8]}"
+    command_id = f"cmd_{uuid4().hex[:8]}_{int(datetime.utcnow().timestamp() * 1000)}"
 
     command = {
         "type": "command",
@@ -301,15 +374,23 @@ async def send_command_to_extension(
         "session_id": target_session,
     }
 
-    await manager.send_message(target_session, command)
+    # Create future for response
+    loop = asyncio.get_event_loop()
+    response_future: asyncio.Future = loop.create_future()
+    pending_responses[command_id] = response_future
 
-    # Nota: Para implementação completa, você precisaria de um mecanismo
-    # de aguardar a resposta (usando asyncio.Event ou similar)
-    # Por agora, retornamos que o comando foi enviado
+    try:
+        # Send command
+        await manager.send_message(target_session, command)
+        logger.debug(f"[MCP-WS] Sent command {command_id}: {action}")
 
-    return {
-        "success": True,
-        "command_id": command_id,
-        "session_id": target_session,
-        "message": "Comando enviado, aguardando resposta da extensão"
-    }
+        # Wait for response with timeout
+        try:
+            response = await asyncio.wait_for(response_future, timeout=timeout)
+            return response
+        except asyncio.TimeoutError:
+            raise Exception(f"Command timeout after {timeout}s: {action}")
+
+    finally:
+        # Cleanup pending response
+        pending_responses.pop(command_id, None)
