@@ -7,7 +7,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import RedirectResponse
-from passlib.context import CryptContext
+import bcrypt
 from pydantic import BaseModel, EmailStr
 from sqlalchemy import select, or_
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -53,18 +53,22 @@ async def debug_db_post_in_auth(
     return {"status": "OK", "result": result.scalar(), "message": request.message}
 
 
-# Password hashing context
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+# Password hashing functions using bcrypt directly
 
 
 def hash_password(password: str) -> str:
     """Hash password using bcrypt."""
-    return pwd_context.hash(password)
+    password_bytes = password.encode('utf-8')
+    salt = bcrypt.gensalt()
+    hashed = bcrypt.hashpw(password_bytes, salt)
+    return hashed.decode('utf-8')
 
 
 def verify_password(password: str, password_hash: str) -> bool:
     """Verify password against hash."""
-    return pwd_context.verify(password, password_hash)
+    password_bytes = password.encode('utf-8')
+    hash_bytes = password_hash.encode('utf-8')
+    return bcrypt.checkpw(password_bytes, hash_bytes)
 
 
 # ============================================================================
