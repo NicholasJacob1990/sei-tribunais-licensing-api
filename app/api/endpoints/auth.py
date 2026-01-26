@@ -133,12 +133,40 @@ async def register_test(
     db: AsyncSession = Depends(get_db),
 ):
     """Simple test endpoint that mimics register."""
-    # This is the same query as in register_with_email
+    # Check if user exists
     result = await db.execute(
         select(User).where(User.email == request.email)
     )
     existing_user = result.scalar_one_or_none()
-    return {"status": "OK", "email": request.email, "exists": existing_user is not None}
+
+    if existing_user:
+        return {"status": "EXISTS", "email": request.email}
+
+    # Create user (same as register)
+    user = User(
+        email=request.email,
+        name=request.name or request.email.split("@")[0],
+        password_hash=hash_password(request.password),
+        last_login_at=datetime.utcnow(),
+    )
+    db.add(user)
+    await db.flush()
+
+    # Create tokens
+    access_token = create_access_token({"sub": user.id, "email": user.email})
+    refresh_token = create_refresh_token({"sub": user.id})
+
+    # Store refresh token hash
+    user.refresh_token_hash = sha256(refresh_token.encode()).hexdigest()
+
+    # Note: db.commit() will be called by get_db after we return
+
+    return {
+        "status": "CREATED",
+        "email": request.email,
+        "user_id": str(user.id),
+        "access_token": access_token[:20] + "...",
+    }
 
 
 @router.post("/register", response_model=TokenResponse)
