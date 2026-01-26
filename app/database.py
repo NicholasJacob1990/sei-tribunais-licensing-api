@@ -138,21 +138,19 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
 
     On connection errors, disposes the engine and retries with a fresh connection.
     """
+    from fastapi import HTTPException
+
     max_retries = 3
     retry_delay = 1.0
+    last_error = None
 
     for attempt in range(max_retries):
         factory = get_session_factory()
         try:
             async with factory() as session:
                 # Test the connection first
-                try:
-                    from sqlalchemy import text
-                    await session.execute(text("SELECT 1"))
-                except Exception as e:
-                    if _is_connection_error(e):
-                        raise  # Will be caught by outer except
-                    raise
+                from sqlalchemy import text
+                await session.execute(text("SELECT 1"))
 
                 try:
                     yield session
@@ -160,11 +158,10 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
                 except Exception:
                     await session.rollback()
                     raise
-                finally:
-                    await session.close()
                 return  # Success, exit the retry loop
 
         except (OperationalError, InterfaceError, DisconnectionError) as e:
+            last_error = e
             if _is_connection_error(e) and attempt < max_retries - 1:
                 logger.warning(
                     f"Connection error (attempt {attempt + 1}/{max_retries}): {e}"
@@ -172,8 +169,9 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
                 await reset_engine()
                 await asyncio.sleep(retry_delay * (attempt + 1))
             else:
-                raise
+                break
         except Exception as e:
+            last_error = e
             if _is_connection_error(e) and attempt < max_retries - 1:
                 logger.warning(
                     f"Connection error (attempt {attempt + 1}/{max_retries}): {e}"
@@ -181,7 +179,14 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
                 await reset_engine()
                 await asyncio.sleep(retry_delay * (attempt + 1))
             else:
-                raise
+                break
+
+    # All retries failed - raise HTTP exception
+    logger.error(f"Database connection failed after {max_retries} attempts: {last_error}")
+    raise HTTPException(
+        status_code=503,
+        detail=f"Database temporarily unavailable. Please try again in a few seconds."
+    )
 
 
 @asynccontextmanager
@@ -189,19 +194,15 @@ async def get_db_context() -> AsyncGenerator[AsyncSession, None]:
     """Context manager for database sessions with automatic retry."""
     max_retries = 3
     retry_delay = 1.0
+    last_error = None
 
     for attempt in range(max_retries):
         factory = get_session_factory()
         try:
             async with factory() as session:
                 # Test the connection first
-                try:
-                    from sqlalchemy import text
-                    await session.execute(text("SELECT 1"))
-                except Exception as e:
-                    if _is_connection_error(e):
-                        raise  # Will be caught by outer except
-                    raise
+                from sqlalchemy import text
+                await session.execute(text("SELECT 1"))
 
                 try:
                     yield session
@@ -209,11 +210,10 @@ async def get_db_context() -> AsyncGenerator[AsyncSession, None]:
                 except Exception:
                     await session.rollback()
                     raise
-                finally:
-                    await session.close()
                 return  # Success, exit the retry loop
 
         except (OperationalError, InterfaceError, DisconnectionError) as e:
+            last_error = e
             if _is_connection_error(e) and attempt < max_retries - 1:
                 logger.warning(
                     f"Connection error (attempt {attempt + 1}/{max_retries}): {e}"
@@ -221,8 +221,9 @@ async def get_db_context() -> AsyncGenerator[AsyncSession, None]:
                 await reset_engine()
                 await asyncio.sleep(retry_delay * (attempt + 1))
             else:
-                raise
+                break
         except Exception as e:
+            last_error = e
             if _is_connection_error(e) and attempt < max_retries - 1:
                 logger.warning(
                     f"Connection error (attempt {attempt + 1}/{max_retries}): {e}"
@@ -230,7 +231,11 @@ async def get_db_context() -> AsyncGenerator[AsyncSession, None]:
                 await reset_engine()
                 await asyncio.sleep(retry_delay * (attempt + 1))
             else:
-                raise
+                break
+
+    # All retries failed
+    logger.error(f"Database connection failed after {max_retries} attempts: {last_error}")
+    raise RuntimeError(f"Database temporarily unavailable: {last_error}")
 
 
 async def init_db() -> None:
