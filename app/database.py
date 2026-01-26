@@ -60,7 +60,9 @@ def _is_connection_error(error: Exception) -> bool:
 def _create_engine():
     """Create a new database engine."""
     connect_args = {}
-    if settings.is_production:
+    # Only use SSL for external connections (hostname with .render.com)
+    db_url = settings.async_database_url
+    if settings.is_production and ".render.com" in db_url:
         connect_args["ssl"] = "require"
 
     return create_async_engine(
