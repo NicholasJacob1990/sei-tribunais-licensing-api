@@ -1,7 +1,7 @@
 """
 License model for storing subscription information
 """
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import TYPE_CHECKING
 from uuid import uuid4
@@ -163,6 +163,6 @@ class License(Base):
     def days_remaining(self) -> int:
         """Calculate days remaining in the current period."""
         if self.current_period_end:
-            delta = self.current_period_end - datetime.utcnow()
+            delta = self.current_period_end - datetime.now(timezone.utc)
             return max(0, delta.days)
         return 0
