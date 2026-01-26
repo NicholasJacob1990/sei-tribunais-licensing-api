@@ -1,7 +1,7 @@
 """
 License management service
 """
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 import structlog
@@ -74,14 +74,14 @@ class LicenseService:
             raise ValueError(f"License already exists for {email} - {product.value}")
 
         # Calculate trial end date
-        trial_end = datetime.utcnow() + timedelta(days=settings.trial_days)
+        trial_end = datetime.now(timezone.utc) + timedelta(days=settings.trial_days)
 
         license = License(
             email=email,
             product=product,
             plan=PlanId.FREE,
             status=LicenseStatus.TRIALING,
-            current_period_start=datetime.utcnow(),
+            current_period_start=datetime.now(timezone.utc),
             current_period_end=trial_end,
         )
 
@@ -129,7 +129,7 @@ class LicenseService:
             license.current_period_end = current_period_end
             license.cancel_at_period_end = cancel_at_period_end
             license.canceled_at = canceled_at
-            license.updated_at = datetime.utcnow()
+            license.updated_at = datetime.now(timezone.utc)
 
             logger.info(
                 "license_updated_from_stripe",
@@ -183,7 +183,7 @@ class LicenseService:
             }
 
         # Check if license is active
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         is_expired = license.current_period_end < now
 
         if not license.is_active or is_expired:
