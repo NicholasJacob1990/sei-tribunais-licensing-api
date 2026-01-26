@@ -117,9 +117,9 @@ PRICE_IDS: dict[str, dict[str, str]] = {
     # Produto principal (Iudex API)
     "default": {
         # Novos planos
-        "starter_monthly": _get_price_id("STARTER_MONTHLY", ""),
+        "starter_monthly": _get_price_id("STARTER_MONTHLY", "price_1SteltCvEJFyzDT1mPf9asRT"),
         "starter_yearly": _get_price_id("STARTER_YEARLY", ""),
-        "pro_monthly": _get_price_id("PRO_MONTHLY", ""),
+        "pro_monthly": _get_price_id("PRO_MONTHLY", "price_1Stem7CvEJFyzDT1LfkUxlQA"),
         "pro_yearly": _get_price_id("PRO_YEARLY", ""),
         # Legacy (mantidos para compatibilidade)
         "professional_monthly": _get_price_id("PROFESSIONAL_MONTHLY", "price_1Stbk5CvEJFyzDT1jUZofSDM"),
