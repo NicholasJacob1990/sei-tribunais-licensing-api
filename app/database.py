@@ -96,10 +96,40 @@ async def get_db_context() -> AsyncGenerator[AsyncSession, None]:
 
 
 async def init_db() -> None:
-    """Initialize database tables."""
+    """Initialize database tables and run migrations."""
     engine = get_engine()
     async with engine.begin() as conn:
+        # Create tables if they don't exist
         await conn.run_sync(Base.metadata.create_all)
+
+        # Run pending migrations
+        await _run_migrations(conn)
+
+
+async def _run_migrations(conn) -> None:
+    """Run pending schema migrations."""
+    from sqlalchemy import text
+
+    # Migration 002: Add password_hash column and make google_id nullable
+    try:
+        # Check if password_hash column exists
+        result = await conn.execute(text("""
+            SELECT column_name FROM information_schema.columns
+            WHERE table_name = 'users' AND column_name = 'password_hash'
+        """))
+        if not result.fetchone():
+            await conn.execute(text(
+                "ALTER TABLE users ADD COLUMN password_hash VARCHAR(255)"
+            ))
+
+        # Make google_id nullable if it's not already
+        await conn.execute(text(
+            "ALTER TABLE users ALTER COLUMN google_id DROP NOT NULL"
+        ))
+    except Exception as e:
+        # Log but don't fail - migrations might already be applied
+        import logging
+        logging.getLogger(__name__).warning(f"Migration warning: {e}")
 
 
 async def close_db() -> None:
