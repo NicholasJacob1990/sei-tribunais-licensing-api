@@ -118,6 +118,9 @@ async def register_with_email(
     Returns:
         JWT access and refresh tokens
     """
+    import logging
+    logger = logging.getLogger(__name__)
+    logger.info(f"=== REGISTER ENDPOINT CALLED === email={request.email}")
     try:
         # Check if email already exists
         result = await db.execute(
