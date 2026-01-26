@@ -36,6 +36,22 @@ async def debug_db_in_auth(db: AsyncSession = Depends(get_db)):
     result = await db.execute(text("SELECT 1"))
     return {"status": "OK", "result": result.scalar(), "module": "auth"}
 
+
+class SimpleRequest(BaseModel):
+    """Simple request for testing."""
+    message: str
+
+
+@router.post("/debug-db-post")
+async def debug_db_post_in_auth(
+    request: SimpleRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Debug POST endpoint to test get_db with body."""
+    from sqlalchemy import text
+    result = await db.execute(text("SELECT 1"))
+    return {"status": "OK", "result": result.scalar(), "message": request.message}
+
 # Password hashing context
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
