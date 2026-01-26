@@ -1,7 +1,7 @@
 """
 Authentication endpoints for Google OAuth and Email/Password
 """
-from datetime import datetime
+from datetime import datetime, timezone
 from hashlib import sha256
 from typing import Annotated
 
@@ -147,7 +147,7 @@ async def register_with_email(
             email=request.email,
             name=request.name or request.email.split("@")[0],
             password_hash=hash_password(request.password),
-            last_login_at=datetime.utcnow(),
+            last_login_at=datetime.now(timezone.utc),
         )
         db.add(user)
         await db.flush()
@@ -225,7 +225,7 @@ async def login_with_email(
         )
 
     # Update last login
-    user.last_login_at = datetime.utcnow()
+    user.last_login_at = datetime.now(timezone.utc)
 
     # Create tokens
     access_token = create_access_token({"sub": user.id, "email": user.email})
@@ -244,6 +244,7 @@ async def login_with_email(
 
 @router.get("/google/login")
 async def google_login(
+    request: Request,
     redirect_uri: Annotated[str | None, Query()] = None,
 ) -> RedirectResponse:
     """
@@ -252,6 +253,7 @@ async def google_login(
     Redirects the user to Google's authorization page.
 
     Args:
+        request: The incoming request (for session access)
         redirect_uri: Optional custom redirect URI after auth
 
     Returns:
@@ -265,7 +267,9 @@ async def google_login(
 
     auth_url, state = get_google_auth_url(redirect_uri)
 
-    # Store state in a cookie for verification on callback
+    # Store state in session for authlib verification AND in cookie as backup
+    request.session["_state_google_"] = state
+
     response = RedirectResponse(url=auth_url, status_code=status.HTTP_302_FOUND)
     response.set_cookie(
         key="oauth_state",
@@ -300,11 +304,22 @@ async def google_callback(
     Returns:
         Redirect to app with tokens in URL params
     """
+    import logging
+    logger = logging.getLogger(__name__)
     from urllib.parse import urlencode
 
-    # Verify state parameter
-    stored_state = request.cookies.get("oauth_state")
+    # Verify state parameter - check both cookie and session
+    stored_state_cookie = request.cookies.get("oauth_state")
+    stored_state_session = request.session.get("_state_google_")
+
+    logger.info(f"OAuth callback - state from URL: {state[:20]}...")
+    logger.info(f"OAuth callback - state from cookie: {stored_state_cookie[:20] if stored_state_cookie else 'None'}...")
+    logger.info(f"OAuth callback - state from session: {stored_state_session[:20] if stored_state_session else 'None'}...")
+
+    # Use session state if available (authlib needs it), fallback to cookie
+    stored_state = stored_state_session or stored_state_cookie
     if not stored_state or stored_state != state or not verify_state(state):
+        logger.error(f"OAuth state mismatch! URL state != stored state")
         return RedirectResponse(url="/?error=invalid_state")
 
     try:
@@ -339,7 +354,7 @@ async def google_callback(
             user.email = email
             user.name = name
             user.picture = picture
-            user.last_login_at = datetime.utcnow()
+            user.last_login_at = datetime.now(timezone.utc)
         else:
             # Create new user
             user = User(
@@ -347,7 +362,7 @@ async def google_callback(
                 email=email,
                 name=name,
                 picture=picture,
-                last_login_at=datetime.utcnow(),
+                last_login_at=datetime.now(timezone.utc),
             )
             db.add(user)
 
@@ -431,7 +446,7 @@ async def google_callback_post(
             user.google_id = google_id
             user.name = request.name or user.name
             user.picture = request.picture or user.picture
-            user.last_login_at = datetime.utcnow()
+            user.last_login_at = datetime.now(timezone.utc)
         else:
             # Create new user
             user = User(
@@ -439,7 +454,7 @@ async def google_callback_post(
                 email=request.email,
                 name=request.name or request.email.split("@")[0],
                 picture=request.picture,
-                last_login_at=datetime.utcnow(),
+                last_login_at=datetime.now(timezone.utc),
             )
             db.add(user)
 
@@ -662,7 +677,7 @@ async def generate_api_token(
 
     # Store hash of the token
     current_user.api_token_hash = sha256(api_token.encode()).hexdigest()
-    current_user.api_token_created_at = datetime.utcnow()
+    current_user.api_token_created_at = datetime.now(timezone.utc)
     await db.commit()
 
     return ApiTokenResponse(
