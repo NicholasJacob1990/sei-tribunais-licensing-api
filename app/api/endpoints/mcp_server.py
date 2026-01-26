@@ -360,13 +360,49 @@ async def handle_playwright_tool(tool_name: str, tool_args: dict, session_id: st
             username = tool_args.get("username", "")
             password = tool_args.get("password", "")
             orgao = tool_args.get("orgao")
-
             result = await playwright_manager.login(pw_session_id, url, username, password, orgao)
 
         elif tool_name == "sei_search_process":
             query = tool_args.get("query", "")
             search_type = tool_args.get("type", "numero")
             result = await playwright_manager.search_process(pw_session_id, query, search_type)
+
+        elif tool_name == "sei_open_process":
+            process_number = tool_args.get("process_number", "")
+            result = await playwright_manager.open_process(pw_session_id, process_number)
+
+        elif tool_name == "sei_list_documents":
+            process_number = tool_args.get("process_number")
+            result = await playwright_manager.list_documents(pw_session_id, process_number)
+
+        elif tool_name == "sei_create_document":
+            result = await playwright_manager.create_document(
+                pw_session_id,
+                tool_args.get("process_number", ""),
+                tool_args.get("document_type", ""),
+                tool_args.get("content"),
+                tool_args.get("description"),
+                tool_args.get("nivel_acesso", "publico")
+            )
+
+        elif tool_name == "sei_sign_document":
+            document_id = tool_args.get("document_id", "")
+            password = tool_args.get("password", "")
+            result = await playwright_manager.sign_document(pw_session_id, document_id, password)
+
+        elif tool_name == "sei_forward_process":
+            result = await playwright_manager.forward_process(
+                pw_session_id,
+                tool_args.get("process_number", ""),
+                tool_args.get("target_unit", ""),
+                tool_args.get("keep_open", False),
+                tool_args.get("note")
+            )
+
+        elif tool_name == "sei_get_status":
+            process_number = tool_args.get("process_number", "")
+            include_history = tool_args.get("include_history", True)
+            result = await playwright_manager.get_status(pw_session_id, process_number, include_history)
 
         elif tool_name == "sei_screenshot":
             full_page = tool_args.get("full_page", False)
@@ -380,6 +416,22 @@ async def handle_playwright_tool(tool_name: str, tool_args: dict, session_id: st
                         "mimeType": result.get("mimeType", "image/png")
                     }]
                 }
+
+        elif tool_name == "sei_navigate":
+            url = tool_args.get("url", "")
+            result = await playwright_manager.navigate(pw_session_id, url)
+
+        elif tool_name == "sei_click":
+            selector = tool_args.get("selector", "")
+            result = await playwright_manager.click(pw_session_id, selector)
+
+        elif tool_name == "sei_fill":
+            selector = tool_args.get("selector", "")
+            value = tool_args.get("value", "")
+            result = await playwright_manager.fill(pw_session_id, selector, value)
+
+        elif tool_name == "sei_logout":
+            result = await playwright_manager.logout(pw_session_id)
 
         elif tool_name == "sei_get_connection_status":
             return {

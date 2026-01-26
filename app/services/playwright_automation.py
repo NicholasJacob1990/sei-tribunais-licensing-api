@@ -257,6 +257,436 @@ class PlaywrightManager:
         except Exception as e:
             return {"success": False, "error": str(e)}
 
+    async def open_process(self, session_id: str, process_number: str) -> dict:
+        """Abre/navega para um processo específico."""
+        if session_id not in self.sessions:
+            return {"success": False, "error": "Sessão não encontrada. Faça login primeiro."}
+
+        session = self.sessions[session_id]
+        page = session.page
+
+        try:
+            # Método 1: Pesquisa rápida no topo
+            search_input = await page.query_selector('#txtPesquisaRapida, input[name="txtPesquisaRapida"]')
+            if search_input:
+                await search_input.fill(process_number)
+                await page.keyboard.press('Enter')
+                await page.wait_for_load_state('networkidle')
+
+                # Verificar se encontrou
+                current_url = page.url
+                if 'processo_visualizar' in current_url or 'processo' in current_url.lower():
+                    return {"success": True, "message": f"Processo {process_number} aberto", "url": current_url}
+
+            # Método 2: Clicar no link do processo se listado
+            process_link = await page.query_selector(f'a:has-text("{process_number}")')
+            if process_link:
+                await process_link.click()
+                await page.wait_for_load_state('networkidle')
+                return {"success": True, "message": f"Processo {process_number} aberto", "url": page.url}
+
+            return {"success": False, "error": f"Processo {process_number} não encontrado"}
+
+        except Exception as e:
+            logger.error(f"Open process error: {e}")
+            return {"success": False, "error": str(e)}
+
+    async def list_documents(self, session_id: str, process_number: str = None) -> dict:
+        """Lista todos os documentos de um processo."""
+        if session_id not in self.sessions:
+            return {"success": False, "error": "Sessão não encontrada"}
+
+        session = self.sessions[session_id]
+        page = session.page
+
+        try:
+            # Se informou número, abre o processo primeiro
+            if process_number:
+                open_result = await self.open_process(session_id, process_number)
+                if not open_result.get("success"):
+                    return open_result
+
+            # Coletar documentos da árvore de processos
+            doc_elements = await page.query_selector_all(
+                '#divArvore a.arvoreNo, .arvore-documento, tr[class*="documento"], .infraArvoreNo'
+            )
+
+            documents = []
+            for elem in doc_elements:
+                try:
+                    text = await elem.inner_text()
+                    href = await elem.get_attribute('href') or ''
+                    doc_id = ''
+
+                    # Extrair ID do documento do href
+                    if 'id_documento=' in href:
+                        doc_id = href.split('id_documento=')[1].split('&')[0]
+                    elif 'documento_visualizar' in href:
+                        doc_id = href.split('/')[-1].split('?')[0]
+
+                    if text.strip():
+                        documents.append({
+                            "name": text.strip(),
+                            "id": doc_id,
+                            "href": href
+                        })
+                except:
+                    continue
+
+            return {"success": True, "documents": documents, "count": len(documents)}
+
+        except Exception as e:
+            logger.error(f"List documents error: {e}")
+            return {"success": False, "error": str(e)}
+
+    async def get_status(self, session_id: str, process_number: str, include_history: bool = True) -> dict:
+        """Consulta andamento e histórico do processo."""
+        if session_id not in self.sessions:
+            return {"success": False, "error": "Sessão não encontrada"}
+
+        session = self.sessions[session_id]
+        page = session.page
+
+        try:
+            # Abre o processo se informou número
+            if process_number:
+                open_result = await self.open_process(session_id, process_number)
+                if not open_result.get("success"):
+                    return open_result
+
+            # Clicar em "Consultar Andamento" ou aba similar
+            andamento_link = await page.query_selector(
+                'a:has-text("Consultar Andamento"), a:has-text("Andamento"), #lnkAndamento'
+            )
+            if andamento_link:
+                await andamento_link.click()
+                await page.wait_for_load_state('networkidle')
+
+            # Coletar histórico
+            history = []
+            if include_history:
+                history_rows = await page.query_selector_all(
+                    'table.infraTable tr, #tblHistorico tr, .historico-item'
+                )
+                for row in history_rows[:20]:  # Limitar a 20 entradas
+                    try:
+                        text = await row.inner_text()
+                        if text.strip():
+                            history.append({"entry": text.strip()})
+                    except:
+                        continue
+
+            # Tentar extrair status atual
+            status_elem = await page.query_selector('.status-processo, #spanStatus, .situacao')
+            status = ""
+            if status_elem:
+                status = await status_elem.inner_text()
+
+            return {
+                "success": True,
+                "process_number": process_number,
+                "status": status.strip() if status else "Status não identificado",
+                "history": history,
+                "history_count": len(history)
+            }
+
+        except Exception as e:
+            logger.error(f"Get status error: {e}")
+            return {"success": False, "error": str(e)}
+
+    async def create_document(self, session_id: str, process_number: str, document_type: str,
+                              content: str = None, description: str = None,
+                              nivel_acesso: str = "publico") -> dict:
+        """Cria um novo documento no processo."""
+        if session_id not in self.sessions:
+            return {"success": False, "error": "Sessão não encontrada"}
+
+        session = self.sessions[session_id]
+        page = session.page
+
+        try:
+            # Abre o processo
+            open_result = await self.open_process(session_id, process_number)
+            if not open_result.get("success"):
+                return open_result
+
+            # Clicar em "Incluir Documento"
+            include_doc = await page.query_selector(
+                'a:has-text("Incluir Documento"), #lnkIncluirDocumento, img[title*="Incluir Documento"]'
+            )
+            if not include_doc:
+                return {"success": False, "error": "Botão 'Incluir Documento' não encontrado"}
+
+            await include_doc.click()
+            await page.wait_for_load_state('networkidle')
+
+            # Selecionar tipo de documento
+            type_input = await page.query_selector(
+                '#txtFiltro, input[name="txtFiltro"], #selTipoDocumento'
+            )
+            if type_input:
+                tag_name = await type_input.evaluate('el => el.tagName.toLowerCase()')
+                if tag_name == 'input':
+                    await type_input.fill(document_type)
+                    await asyncio.sleep(0.5)
+                    # Clicar no resultado da busca
+                    type_option = await page.query_selector(f'a:has-text("{document_type}"), li:has-text("{document_type}")')
+                    if type_option:
+                        await type_option.click()
+                else:
+                    await page.select_option(type_input, label=document_type)
+
+            await page.wait_for_load_state('networkidle')
+
+            # Preencher descrição se informada
+            if description:
+                desc_input = await page.query_selector(
+                    '#txtDescricao, input[name="txtDescricao"], textarea[name="txtDescricao"]'
+                )
+                if desc_input:
+                    await desc_input.fill(description)
+
+            # Selecionar nível de acesso
+            nivel_map = {"publico": "0", "restrito": "1", "sigiloso": "2"}
+            nivel_value = nivel_map.get(nivel_acesso.lower(), "0")
+            nivel_radio = await page.query_selector(f'input[name="staNivelAcesso"][value="{nivel_value}"]')
+            if nivel_radio:
+                await nivel_radio.click()
+
+            # Salvar/Confirmar
+            save_btn = await page.query_selector(
+                'button[type="submit"], input[type="submit"], #btnSalvar, #btnConfirmar'
+            )
+            if save_btn:
+                await save_btn.click()
+                await page.wait_for_load_state('networkidle')
+
+            # Verificar se criou
+            current_url = page.url
+            if 'editor' in current_url.lower() or 'documento' in current_url.lower():
+                # Se tem conteúdo, preencher no editor
+                if content:
+                    # Tentar preencher no iframe do editor
+                    editor_frame = page.frame_locator('iframe#txtAreaEditor, iframe.cke_wysiwyg_frame')
+                    try:
+                        editor_body = editor_frame.locator('body')
+                        await editor_body.fill(content)
+                    except:
+                        # Fallback: textarea simples
+                        textarea = await page.query_selector('textarea#txtAreaEditor, textarea.editor')
+                        if textarea:
+                            await textarea.fill(content)
+
+                return {"success": True, "message": f"Documento {document_type} criado", "url": current_url}
+
+            return {"success": True, "message": f"Documento {document_type} iniciado"}
+
+        except Exception as e:
+            logger.error(f"Create document error: {e}")
+            return {"success": False, "error": str(e)}
+
+    async def sign_document(self, session_id: str, document_id: str, password: str) -> dict:
+        """Assina documento eletronicamente."""
+        if session_id not in self.sessions:
+            return {"success": False, "error": "Sessão não encontrada"}
+
+        session = self.sessions[session_id]
+        page = session.page
+
+        try:
+            # Navegar para o documento se tiver ID
+            if document_id:
+                doc_link = await page.query_selector(f'a[href*="id_documento={document_id}"]')
+                if doc_link:
+                    await doc_link.click()
+                    await page.wait_for_load_state('networkidle')
+
+            # Clicar em "Assinar"
+            sign_btn = await page.query_selector(
+                'a:has-text("Assinar"), img[title*="Assinar"], #btnAssinar, button:has-text("Assinar")'
+            )
+            if not sign_btn:
+                return {"success": False, "error": "Botão de assinatura não encontrado"}
+
+            await sign_btn.click()
+            await page.wait_for_load_state('networkidle')
+
+            # Preencher senha
+            pwd_input = await page.query_selector(
+                'input[type="password"], #pwdSenha, input[name="pwdSenha"]'
+            )
+            if pwd_input:
+                await pwd_input.fill(password)
+
+            # Confirmar assinatura
+            confirm_btn = await page.query_selector(
+                'button[type="submit"]:has-text("Assinar"), #btnConfirmar, input[value="Assinar"]'
+            )
+            if confirm_btn:
+                await confirm_btn.click()
+                await page.wait_for_load_state('networkidle')
+
+            # Verificar sucesso
+            success_msg = await page.query_selector('.alert-success, .mensagem-sucesso, :has-text("assinado com sucesso")')
+            if success_msg:
+                return {"success": True, "message": "Documento assinado com sucesso"}
+
+            # Verificar erro
+            error_msg = await page.query_selector('.alert-danger, .mensagem-erro, .infraException')
+            if error_msg:
+                error_text = await error_msg.inner_text()
+                return {"success": False, "error": error_text.strip()}
+
+            return {"success": True, "message": "Assinatura processada"}
+
+        except Exception as e:
+            logger.error(f"Sign document error: {e}")
+            return {"success": False, "error": str(e)}
+
+    async def forward_process(self, session_id: str, process_number: str, target_unit: str,
+                              keep_open: bool = False, note: str = None) -> dict:
+        """Tramita processo para outra unidade."""
+        if session_id not in self.sessions:
+            return {"success": False, "error": "Sessão não encontrada"}
+
+        session = self.sessions[session_id]
+        page = session.page
+
+        try:
+            # Abre o processo
+            open_result = await self.open_process(session_id, process_number)
+            if not open_result.get("success"):
+                return open_result
+
+            # Clicar em "Enviar Processo"
+            send_btn = await page.query_selector(
+                'a:has-text("Enviar Processo"), img[title*="Enviar"], #lnkEnviarProcesso'
+            )
+            if not send_btn:
+                return {"success": False, "error": "Botão 'Enviar Processo' não encontrado"}
+
+            await send_btn.click()
+            await page.wait_for_load_state('networkidle')
+
+            # Selecionar unidade destino
+            unit_input = await page.query_selector(
+                '#txtUnidade, input[name="txtUnidade"], #selUnidadesDestino'
+            )
+            if unit_input:
+                tag_name = await unit_input.evaluate('el => el.tagName.toLowerCase()')
+                if tag_name == 'input':
+                    await unit_input.fill(target_unit)
+                    await asyncio.sleep(0.5)
+                    # Clicar na sugestão
+                    suggestion = await page.query_selector(f'.autocomplete-suggestion:has-text("{target_unit}"), li:has-text("{target_unit}")')
+                    if suggestion:
+                        await suggestion.click()
+                else:
+                    await page.select_option(unit_input, label=target_unit)
+
+            # Manter aberto na unidade atual
+            if keep_open:
+                keep_checkbox = await page.query_selector(
+                    '#chkManterAberto, input[name="chkManterAberto"]'
+                )
+                if keep_checkbox:
+                    await keep_checkbox.check()
+
+            # Adicionar observação
+            if note:
+                note_input = await page.query_selector(
+                    '#txtObservacao, textarea[name="txtObservacao"]'
+                )
+                if note_input:
+                    await note_input.fill(note)
+
+            # Enviar
+            submit_btn = await page.query_selector(
+                'button[type="submit"], #btnEnviar, input[value="Enviar"]'
+            )
+            if submit_btn:
+                await submit_btn.click()
+                await page.wait_for_load_state('networkidle')
+
+            return {"success": True, "message": f"Processo tramitado para {target_unit}"}
+
+        except Exception as e:
+            logger.error(f"Forward process error: {e}")
+            return {"success": False, "error": str(e)}
+
+    async def navigate(self, session_id: str, url: str) -> dict:
+        """Navega para uma URL específica."""
+        if session_id not in self.sessions:
+            return {"success": False, "error": "Sessão não encontrada"}
+
+        session = self.sessions[session_id]
+        page = session.page
+
+        try:
+            await page.goto(url, wait_until='domcontentloaded')
+            await page.wait_for_load_state('networkidle')
+
+            return {
+                "success": True,
+                "url": page.url,
+                "title": await page.title()
+            }
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    async def click(self, session_id: str, selector: str) -> dict:
+        """Clica em um elemento na página."""
+        if session_id not in self.sessions:
+            return {"success": False, "error": "Sessão não encontrada"}
+
+        session = self.sessions[session_id]
+        page = session.page
+
+        try:
+            await page.click(selector)
+            await page.wait_for_load_state('networkidle')
+            return {"success": True, "message": f"Clicado em {selector}"}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    async def fill(self, session_id: str, selector: str, value: str) -> dict:
+        """Preenche um campo na página."""
+        if session_id not in self.sessions:
+            return {"success": False, "error": "Sessão não encontrada"}
+
+        session = self.sessions[session_id]
+        page = session.page
+
+        try:
+            await page.fill(selector, value)
+            return {"success": True, "message": f"Campo {selector} preenchido"}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    async def logout(self, session_id: str) -> dict:
+        """Faz logout do SEI."""
+        if session_id not in self.sessions:
+            return {"success": False, "error": "Sessão não encontrada"}
+
+        session = self.sessions[session_id]
+        page = session.page
+
+        try:
+            logout_btn = await page.query_selector(
+                'a:has-text("Sair"), #lnkSair, a[href*="logout"], img[title*="Sair"]'
+            )
+            if logout_btn:
+                await logout_btn.click()
+                await page.wait_for_load_state('networkidle')
+
+            session.logged_in = False
+            session.user = None
+
+            return {"success": True, "message": "Logout realizado"}
+
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
 
 # Instância global
 playwright_manager = PlaywrightManager()
