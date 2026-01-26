@@ -28,6 +28,14 @@ from app.auth.dependencies import get_current_user, CurrentUser
 
 router = APIRouter(prefix="/auth", tags=["authentication"])
 
+
+@router.get("/debug-db")
+async def debug_db_in_auth(db: AsyncSession = Depends(get_db)):
+    """Debug endpoint to test get_db in auth router."""
+    from sqlalchemy import text
+    result = await db.execute(text("SELECT 1"))
+    return {"status": "OK", "result": result.scalar(), "module": "auth"}
+
 # Password hashing context
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
