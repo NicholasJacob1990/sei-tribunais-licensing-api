@@ -53,24 +53,6 @@ async def debug_db_post_in_auth(
     return {"status": "OK", "result": result.scalar(), "message": request.message}
 
 
-@router.post("/debug-register-request")
-async def debug_register_request(
-    request: RegisterRequest,
-    db: AsyncSession = Depends(get_db),
-):
-    """Test RegisterRequest model with get_db."""
-    from sqlalchemy import text
-    result = await db.execute(text("SELECT 1"))
-    return {"status": "OK", "result": result.scalar(), "email": request.email}
-
-
-@router.post("/debug-register-no-db")
-async def debug_register_no_db(
-    request: RegisterRequest,
-):
-    """Test RegisterRequest model WITHOUT get_db."""
-    return {"status": "OK", "email": request.email, "name": request.name}
-
 # Password hashing context
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
@@ -139,6 +121,30 @@ class UserWithLicensesResponse(BaseModel):
     """User information with associated licenses."""
     user: UserResponse
     licenses: list[dict]
+
+
+# ============================================================================
+# Debug Endpoints (using RegisterRequest)
+# ============================================================================
+
+
+@router.post("/debug-register-request")
+async def debug_register_request(
+    request: RegisterRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Test RegisterRequest model with get_db."""
+    from sqlalchemy import text
+    result = await db.execute(text("SELECT 1"))
+    return {"status": "OK", "result": result.scalar(), "email": request.email}
+
+
+@router.post("/debug-register-no-db")
+async def debug_register_no_db(
+    request: RegisterRequest,
+):
+    """Test RegisterRequest model WITHOUT get_db."""
+    return {"status": "OK", "email": request.email, "name": request.name}
 
 
 # ============================================================================
