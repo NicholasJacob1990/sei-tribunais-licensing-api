@@ -213,6 +213,20 @@ async def health_check():
     }
 
 
+@app.get("/debug/test-get-db")
+async def debug_test_get_db():
+    """Test get_db dependency directly."""
+    from sqlalchemy import text
+    from app.database import get_db
+    try:
+        async for session in get_db():
+            result = await session.execute(text("SELECT 1 as test"))
+            return {"status": "OK", "result": result.scalar()}
+    except Exception as e:
+        import traceback
+        return {"status": "ERROR", "error": str(e), "traceback": traceback.format_exc()[:500]}
+
+
 @app.get("/debug/routers")
 async def debug_routers():
     """Debug endpoint to check router loading errors."""
