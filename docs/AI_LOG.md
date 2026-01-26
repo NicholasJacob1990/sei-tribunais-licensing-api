@@ -1,5 +1,29 @@
 # AI Log - SEI Tribunais Licensing API
 
+## 2026-01-26 - Fix: Conexao DB e Compatibilidade Python 3.13
+
+### Problema
+Usuario nao conseguia se registrar - erro "Database temporarily unavailable"
+
+### Causa Raiz
+1. Biblioteca `passlib` incompativel com Python 3.13
+2. Erro confuso mascarava o problema real (parecia ser conexao DB)
+
+### Solucao
+- Substituir `passlib[bcrypt]` por `bcrypt` diretamente
+- Implementar `hash_password()` e `verify_password()` usando bcrypt puro
+
+### Arquivos Alterados
+- `requirements.txt` - Trocar passlib por bcrypt
+- `app/api/endpoints/auth.py` - Reimplementar funcoes de hash
+- `app/database.py` - Melhorias em retry de conexao (commits anteriores)
+
+### Token Gerado
+Usuario: nicholasjacob90@gmail.com
+API Token: `sei_b4d630e6d79cf61845c7adf91ff6291fd5b7a5c62d87b91f5fad2ed13e3f50a3`
+
+---
+
 ## 2026-01-26 - Paridade Playwright/Extensao MCP
 
 ### Arquivos Alterados
