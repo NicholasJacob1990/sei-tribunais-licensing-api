@@ -132,10 +132,13 @@ async def register_test(
     request: RegisterRequest,
     db: AsyncSession = Depends(get_db),
 ):
-    """Simple test endpoint."""
-    from sqlalchemy import text
-    await db.execute(text("SELECT 1"))
-    return {"status": "OK", "email": request.email}
+    """Simple test endpoint that mimics register."""
+    # This is the same query as in register_with_email
+    result = await db.execute(
+        select(User).where(User.email == request.email)
+    )
+    existing_user = result.scalar_one_or_none()
+    return {"status": "OK", "email": request.email, "exists": existing_user is not None}
 
 
 @router.post("/register", response_model=TokenResponse)
