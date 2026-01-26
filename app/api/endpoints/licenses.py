@@ -59,11 +59,19 @@ async def check_license(
 
     Returns license details if valid, or instructions for getting a license.
     """
+    import logging
+    logger = logging.getLogger(__name__)
+    logger.info(f"check_license called: email={request.email}, product={request.product}")
+
     try:
         product = ProductType(request.product)
+        logger.info(f"ProductType created: {product}")
+
         service = LicenseService(db)
+        logger.info("LicenseService created")
 
         result = await service.validate(request.email, product)
+        logger.info(f"Validation result: {result}")
 
         return LicenseValidation(
             valid=result["valid"],
@@ -76,6 +84,8 @@ async def check_license(
         )
 
     except Exception as e:
+        import traceback
+        logger.error(f"check_license error: {e}\n{traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=f"Erro ao verificar licenca: {str(e)}")
 
 

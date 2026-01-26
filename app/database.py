@@ -146,38 +146,40 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
     retry_delay = 1.0
     last_error = None
 
+    logger.debug("get_db called")
+
     for attempt in range(max_retries):
         factory = get_session_factory()
+        logger.debug(f"get_db attempt {attempt + 1}/{max_retries}")
         try:
             async with factory() as session:
                 # Test the connection first
                 from sqlalchemy import text
                 await session.execute(text("SELECT 1"))
+                logger.debug("get_db connection test passed")
 
                 try:
                     yield session
                     await session.commit()
-                except Exception:
+                    logger.debug("get_db commit successful")
+                except Exception as e:
+                    logger.warning(f"get_db rollback due to: {e}")
                     await session.rollback()
                     raise
                 return  # Success, exit the retry loop
 
         except (OperationalError, InterfaceError, DisconnectionError) as e:
             last_error = e
+            logger.warning(f"get_db DB error (attempt {attempt + 1}): {type(e).__name__}: {e}")
             if _is_connection_error(e) and attempt < max_retries - 1:
-                logger.warning(
-                    f"Connection error (attempt {attempt + 1}/{max_retries}): {e}"
-                )
                 await reset_engine()
                 await asyncio.sleep(retry_delay * (attempt + 1))
             else:
                 break
         except Exception as e:
             last_error = e
+            logger.warning(f"get_db other error (attempt {attempt + 1}): {type(e).__name__}: {e}")
             if _is_connection_error(e) and attempt < max_retries - 1:
-                logger.warning(
-                    f"Connection error (attempt {attempt + 1}/{max_retries}): {e}"
-                )
                 await reset_engine()
                 await asyncio.sleep(retry_delay * (attempt + 1))
             else:
