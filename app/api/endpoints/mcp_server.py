@@ -225,8 +225,14 @@ MCP_TOOLS = [
 
 async def handle_initialize(params: dict) -> dict:
     """Handle MCP initialize request."""
+    # Aceitar a versão do protocolo do cliente (2024-11-05 ou 2025-06-18)
+    client_version = params.get("protocolVersion", "2024-11-05")
+    # Suportar versões conhecidas
+    supported_versions = ["2024-11-05", "2025-06-18"]
+    protocol_version = client_version if client_version in supported_versions else "2024-11-05"
+
     return {
-        "protocolVersion": "2024-11-05",
+        "protocolVersion": protocol_version,
         "capabilities": {
             "tools": {}
         },
@@ -709,7 +715,7 @@ async def process_jsonrpc_request(request: dict) -> dict:
     params = request.get("params", {})
     request_id = request.get("id")
 
-    logger.debug(f"[MCP] Request: method={method}, id={request_id}")
+    logger.info(f"[MCP] Request: method={method}, id={request_id}, params_keys={list(params.keys())}")
 
     try:
         if method == "initialize":
