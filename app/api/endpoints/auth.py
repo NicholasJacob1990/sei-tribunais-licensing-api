@@ -158,47 +158,51 @@ async def register_test(
     db: AsyncSession = Depends(get_db),
 ):
     """Simple test endpoint - step by step."""
-    steps = []
+    try:
+        steps = []
 
-    # Step 1: Query
-    steps.append("querying")
-    result = await db.execute(
-        select(User).where(User.email == request.email)
-    )
-    existing_user = result.scalar_one_or_none()
-    steps.append("query_done")
+        # Step 1: Query
+        steps.append("querying")
+        result = await db.execute(
+            select(User).where(User.email == request.email)
+        )
+        existing_user = result.scalar_one_or_none()
+        steps.append("query_done")
 
-    if existing_user:
-        return {"status": "EXISTS", "email": request.email, "steps": steps}
+        if existing_user:
+            return {"status": "EXISTS", "email": request.email, "steps": steps}
 
-    # Step 2: Hash password (CPU-intensive, might block)
-    steps.append("hashing")
-    pw_hash = hash_password(request.password)
-    steps.append("hash_done")
+        # Step 2: Hash password (CPU-intensive, might block)
+        steps.append("hashing")
+        pw_hash = hash_password(request.password)
+        steps.append("hash_done")
 
-    # Step 3: Create User object
-    steps.append("creating_user")
-    user = User(
-        email=request.email,
-        name=request.name or request.email.split("@")[0],
-        password_hash=pw_hash,
-        last_login_at=datetime.utcnow(),
-    )
-    steps.append("user_created")
+        # Step 3: Create User object
+        steps.append("creating_user")
+        user = User(
+            email=request.email,
+            name=request.name or request.email.split("@")[0],
+            password_hash=pw_hash,
+            last_login_at=datetime.utcnow(),
+        )
+        steps.append("user_created")
 
-    # Step 4: Add and flush
-    steps.append("adding")
-    db.add(user)
-    steps.append("flushing")
-    await db.flush()
-    steps.append("flush_done")
+        # Step 4: Add and flush
+        steps.append("adding")
+        db.add(user)
+        steps.append("flushing")
+        await db.flush()
+        steps.append("flush_done")
 
-    return {
-        "status": "CREATED",
-        "email": request.email,
-        "user_id": str(user.id),
-        "steps": steps,
-    }
+        return {
+            "status": "CREATED",
+            "email": request.email,
+            "user_id": str(user.id),
+            "steps": steps,
+        }
+    except Exception as e:
+        import traceback
+        return {"status": "ERROR", "error": str(e), "type": type(e).__name__, "traceback": traceback.format_exc()[:500]}
 
 
 @router.post("/register", response_model=TokenResponse)
