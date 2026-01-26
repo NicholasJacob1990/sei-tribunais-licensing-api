@@ -359,7 +359,7 @@ class StripeService:
             session = stripe.checkout.Session.create(
                 customer=customer.id,
                 mode="subscription",
-                payment_method_types=["card", "boleto", "pix"],
+                payment_method_types=["card"],
                 line_items=[
                     {
                         "price": price_id,
