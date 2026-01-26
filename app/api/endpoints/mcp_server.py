@@ -48,7 +48,7 @@ COMMON_FIELDS = {
 }
 
 # Tools que são executadas localmente no servidor (não precisam de extensão)
-LOCAL_TOOLS = ["sei_open_url", "sei_get_connection_status"]
+LOCAL_TOOLS = ["sei_open_url", "sei_get_connection_status", "sei_wait_for_extension"]
 
 # ============================================
 # Definição das Ferramentas MCP
@@ -67,13 +67,24 @@ def with_common_fields(schema: dict, exclude_fields: list = None) -> dict:
 MCP_TOOLS = [
     {
         "name": "sei_open_url",
-        "description": "Abre uma URL no navegador padrão do sistema (não requer extensão conectada)",
+        "description": "Abre uma URL no navegador padrão do sistema (não requer extensão conectada). Use este comando PRIMEIRO se a extensão não estiver conectada.",
         "inputSchema": {
             "type": "object",
             "properties": {
                 "url": {"type": "string", "description": "URL para abrir no navegador"}
             },
             "required": ["url"]
+        }
+    },
+    {
+        "name": "sei_wait_for_extension",
+        "description": "Aguarda até que uma extensão Chrome se conecte ao servidor. Use antes de outros comandos se não houver extensão conectada.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "timeout_seconds": {"type": "integer", "description": "Tempo máximo de espera em segundos (padrão: 30)", "default": 30},
+                "open_url": {"type": "string", "description": "URL para abrir no navegador enquanto aguarda (opcional)"}
+            }
         }
     },
     {
@@ -255,6 +266,58 @@ async def handle_local_tool(tool_name: str, tool_args: dict) -> dict:
             "isError": not result.get("success", False)
         }
 
+    elif tool_name == "sei_wait_for_extension":
+        timeout_seconds = tool_args.get("timeout_seconds", 30)
+        open_url = tool_args.get("open_url")
+
+        # Se já está conectado, retorna imediatamente
+        if ws_manager.is_connected():
+            return {
+                "content": [{
+                    "type": "text",
+                    "text": json.dumps({
+                        "connected": True,
+                        "message": "Extensão já está conectada",
+                        "sessions": ws_manager.list_sessions()
+                    }, indent=2, ensure_ascii=False)
+                }]
+            }
+
+        # Opcionalmente abre URL enquanto aguarda
+        if open_url:
+            open_url_in_system_browser(open_url)
+
+        # Aguarda conexão com polling
+        start_time = datetime.utcnow()
+        while (datetime.utcnow() - start_time).total_seconds() < timeout_seconds:
+            if ws_manager.is_connected():
+                return {
+                    "content": [{
+                        "type": "text",
+                        "text": json.dumps({
+                            "connected": True,
+                            "message": "Extensão conectada com sucesso",
+                            "wait_time_seconds": (datetime.utcnow() - start_time).total_seconds(),
+                            "sessions": ws_manager.list_sessions()
+                        }, indent=2, ensure_ascii=False)
+                    }]
+                }
+            await asyncio.sleep(1)
+
+        # Timeout
+        return {
+            "content": [{
+                "type": "text",
+                "text": json.dumps({
+                    "connected": False,
+                    "error": f"Timeout após {timeout_seconds}s aguardando extensão",
+                    "message": "Verifique se a extensão SEI-MCP está instalada e ativada no Chrome",
+                    "tip": "Use sei_open_url para abrir o SEI manualmente"
+                }, indent=2, ensure_ascii=False)
+            }],
+            "isError": True
+        }
+
     elif tool_name == "sei_get_connection_status":
         return {
             "content": [{
@@ -294,9 +357,14 @@ async def handle_call_tool(params: dict) -> dict:
                 "type": "text",
                 "text": json.dumps({
                     "error": "Nenhuma extensão Chrome conectada",
-                    "message": "Por favor, abra o SEI no Chrome e conecte a extensão SEI-MCP Bridge",
-                    "available_sessions": available_sessions,
-                    "tip": "Use sei_open_url para abrir o SEI no navegador sem precisar de extensão"
+                    "action_required": "Use sei_wait_for_extension ou sei_open_url primeiro",
+                    "recommended_flow": [
+                        "1. Chame sei_wait_for_extension com open_url da página do SEI",
+                        "2. Aguarde a extensão conectar",
+                        "3. Então execute o comando desejado"
+                    ],
+                    "alternative": "Use sei_open_url para apenas abrir o navegador (sem automação)",
+                    "available_sessions": available_sessions
                 }, indent=2, ensure_ascii=False)
             }],
             "isError": True
