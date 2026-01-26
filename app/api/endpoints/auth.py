@@ -17,7 +17,7 @@ from app.config import settings
 from app.database import get_db
 from app.models.user import User
 from app.models.license import License, ProductType
-from app.auth.google import get_oauth, get_google_auth_url, verify_state
+from app.auth.google import get_oauth, get_google_auth_url, verify_state, exchange_code_for_token, get_google_user_info
 from app.auth.jwt import (
     create_access_token,
     create_refresh_token,
@@ -323,21 +323,23 @@ async def google_callback(
         return RedirectResponse(url="/?error=invalid_state")
 
     try:
-        # Exchange code for token
-        oauth = get_oauth()
-        token = await oauth.google.authorize_access_token(request)
+        # Exchange code for token (manual implementation - no authlib dependency)
+        token = await exchange_code_for_token(code)
+        logger.info(f"Token exchange successful")
 
-        if not token:
+        if not token or "access_token" not in token:
             return RedirectResponse(url="/?error=no_token")
 
-        # Get user info from token
-        userinfo = token.get("userinfo")
+        # Get user info from Google
+        userinfo = await get_google_user_info(token["access_token"])
+        logger.info(f"Got user info for: {userinfo.get('email')}")
+
         if not userinfo:
             return RedirectResponse(url="/?error=no_userinfo")
 
-        google_id = userinfo.get("sub")
+        google_id = userinfo.get("id")  # Google userinfo uses 'id' not 'sub'
         email = userinfo.get("email")
-        name = userinfo.get("name", email.split("@")[0])
+        name = userinfo.get("name", email.split("@")[0] if email else "User")
         picture = userinfo.get("picture")
 
         if not email:

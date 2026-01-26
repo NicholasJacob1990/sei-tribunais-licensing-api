@@ -130,3 +130,62 @@ async def verify_google_token(token: dict[str, Any]) -> dict[str, Any] | None:
         }
 
     return None
+
+
+async def exchange_code_for_token(code: str, redirect_uri: str | None = None) -> dict[str, Any]:
+    """
+    Exchange authorization code for access token (manual implementation).
+
+    Args:
+        code: Authorization code from Google
+        redirect_uri: Redirect URI used in the auth request
+
+    Returns:
+        Token response from Google
+
+    Raises:
+        Exception: If token exchange fails
+    """
+    import httpx
+
+    token_url = "https://oauth2.googleapis.com/token"
+    data = {
+        "code": code,
+        "client_id": settings.google_client_id,
+        "client_secret": settings.google_client_secret,
+        "redirect_uri": redirect_uri or settings.google_redirect_uri,
+        "grant_type": "authorization_code",
+    }
+
+    async with httpx.AsyncClient() as client:
+        response = await client.post(token_url, data=data)
+        if response.status_code != 200:
+            raise Exception(f"Token exchange failed: {response.text}")
+        return response.json()
+
+
+async def get_google_user_info(access_token: str) -> dict[str, Any]:
+    """
+    Get user info from Google using access token.
+
+    Args:
+        access_token: Google access token
+
+    Returns:
+        User info dict from Google
+
+    Raises:
+        Exception: If fetching user info fails
+    """
+    import httpx
+
+    userinfo_url = "https://www.googleapis.com/oauth2/v2/userinfo"
+
+    async with httpx.AsyncClient() as client:
+        response = await client.get(
+            userinfo_url,
+            headers={"Authorization": f"Bearer {access_token}"}
+        )
+        if response.status_code != 200:
+            raise Exception(f"Failed to get user info: {response.text}")
+        return response.json()
