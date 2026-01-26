@@ -107,10 +107,10 @@ PRICE_IDS: dict[str, dict[str, str]] = {
     # Produto principal (Iudex API)
     "default": {
         # FREE nao precisa de price_id (nao tem cobranca)
-        "professional_monthly": _get_price_id("PROFESSIONAL_MONTHLY", "price_professional_monthly"),
-        "professional_yearly": _get_price_id("PROFESSIONAL_YEARLY", "price_professional_yearly"),
-        "enterprise_monthly": _get_price_id("ENTERPRISE_MONTHLY", "price_enterprise_monthly"),
-        "enterprise_yearly": _get_price_id("ENTERPRISE_YEARLY", "price_enterprise_yearly"),
+        "professional_monthly": _get_price_id("PROFESSIONAL_MONTHLY", "price_1Stbk5CvEJFyzDT1jUZofSDM"),
+        "professional_yearly": _get_price_id("PROFESSIONAL_YEARLY", "price_1Stbk6CvEJFyzDT1gucqDDtL"),
+        "enterprise_monthly": _get_price_id("ENTERPRISE_MONTHLY", "price_1Stbk7CvEJFyzDT1Ol3ucCbI"),
+        "enterprise_yearly": _get_price_id("ENTERPRISE_YEARLY", "price_1Stbk8CvEJFyzDT1ZUGDqo8u"),
     },
 }
 
