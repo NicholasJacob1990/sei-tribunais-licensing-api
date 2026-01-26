@@ -147,6 +147,34 @@ async def debug_register_no_db(
     return {"status": "OK", "email": request.email, "name": request.name}
 
 
+@router.post("/debug-hash")
+async def debug_hash(request: RegisterRequest):
+    """Test password hashing."""
+    import sys
+    try:
+        pw_len = len(request.password)
+        pw_bytes = len(request.password.encode('utf-8'))
+        pw_hash = hash_password(request.password)
+        return {
+            "status": "OK",
+            "password_len": pw_len,
+            "password_bytes": pw_bytes,
+            "hash_prefix": pw_hash[:20] + "...",
+            "python_version": sys.version,
+        }
+    except Exception as e:
+        import traceback
+        return {
+            "status": "ERROR",
+            "error": str(e),
+            "type": type(e).__name__,
+            "password_len": len(request.password),
+            "password_bytes": len(request.password.encode('utf-8')),
+            "python_version": sys.version,
+            "traceback": traceback.format_exc()[:800],
+        }
+
+
 # ============================================================================
 # Endpoints
 # ============================================================================
