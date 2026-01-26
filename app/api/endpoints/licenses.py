@@ -34,7 +34,7 @@ class LicenseInfo(BaseModel):
 
 class PlanLimits(BaseModel):
     """Plan limits."""
-    operations_per_day: int
+    requests_per_month: int
     users: int
 
 
