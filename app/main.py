@@ -8,10 +8,17 @@ from contextlib import asynccontextmanager
 import logging
 import sys
 
+from pathlib import Path
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 
 from app.config import settings
+
+# Static files directory
+STATIC_DIR = Path(__file__).parent / "static"
 from app.database import init_db, close_db
 
 # Configure standard logging
@@ -180,6 +187,11 @@ def load_routers():
 # Load routers
 load_routers()
 
+# Mount static files (after routers to not override API routes)
+if STATIC_DIR.exists():
+    app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+    logger.info(f"Static files mounted from {STATIC_DIR}")
+
 
 @app.get("/health")
 async def health_check():
@@ -287,8 +299,37 @@ async def run_migration_manually():
 
 @app.get("/")
 async def root():
-    """Root endpoint with API info."""
-    # List actually loaded routes
+    """Serve the registration/login page."""
+    index_path = STATIC_DIR / "index.html"
+    if index_path.exists():
+        return FileResponse(index_path)
+
+    # Fallback to JSON if no static file
+    loaded_routes = [route.path for route in app.routes if hasattr(route, 'path')]
+    api_routes = [r for r in loaded_routes if r.startswith('/api/')]
+
+    return {
+        "name": settings.app_name,
+        "version": settings.app_version,
+        "status": "running",
+        "docs": "/docs",
+        "register": "/register",
+        "loaded_api_routes": api_routes,
+    }
+
+
+@app.get("/register")
+async def register_page():
+    """Serve the registration page."""
+    index_path = STATIC_DIR / "index.html"
+    if index_path.exists():
+        return FileResponse(index_path)
+    return {"error": "Registration page not found", "docs": "/docs"}
+
+
+@app.get("/api")
+async def api_info():
+    """API info endpoint."""
     loaded_routes = [route.path for route in app.routes if hasattr(route, 'path')]
     api_routes = [r for r in loaded_routes if r.startswith('/api/')]
 

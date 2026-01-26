@@ -29,6 +29,16 @@ router = APIRouter(prefix="/mcp", tags=["MCP Server"])
 # Importar o gerenciador de conexões WebSocket
 from app.api.endpoints.mcp_websocket import manager as ws_manager
 
+# Playwright automation (fallback when extension not connected)
+try:
+    from app.services.playwright_automation import playwright_manager
+    PLAYWRIGHT_AVAILABLE = playwright_manager.is_available()
+except ImportError:
+    playwright_manager = None
+    PLAYWRIGHT_AVAILABLE = False
+
+logger.info(f"Playwright automation available: {PLAYWRIGHT_AVAILABLE}")
+
 # Armazena respostas pendentes de comandos
 pending_responses: Dict[str, asyncio.Future] = {}
 
@@ -333,6 +343,87 @@ async def handle_local_tool(tool_name: str, tool_args: dict) -> dict:
     return {"content": [{"type": "text", "text": "Tool local não implementada"}], "isError": True}
 
 
+async def handle_playwright_tool(tool_name: str, tool_args: dict, session_id: str = None) -> dict:
+    """Executa ferramenta via Playwright (fallback quando extensão não conectada)."""
+    if not playwright_manager:
+        return {
+            "content": [{"type": "text", "text": json.dumps({"error": "Playwright não disponível"})}],
+            "isError": True
+        }
+
+    # Usar session_id ou criar default
+    pw_session_id = session_id or "default"
+
+    try:
+        if tool_name == "sei_login":
+            url = tool_args.get("url", "")
+            username = tool_args.get("username", "")
+            password = tool_args.get("password", "")
+            orgao = tool_args.get("orgao")
+
+            result = await playwright_manager.login(pw_session_id, url, username, password, orgao)
+
+        elif tool_name == "sei_search_process":
+            query = tool_args.get("query", "")
+            search_type = tool_args.get("type", "numero")
+            result = await playwright_manager.search_process(pw_session_id, query, search_type)
+
+        elif tool_name == "sei_screenshot":
+            full_page = tool_args.get("full_page", False)
+            result = await playwright_manager.screenshot(pw_session_id, full_page)
+
+            if result.get("success") and "image" in result:
+                return {
+                    "content": [{
+                        "type": "image",
+                        "data": result["image"],
+                        "mimeType": result.get("mimeType", "image/png")
+                    }]
+                }
+
+        elif tool_name == "sei_get_connection_status":
+            return {
+                "content": [{
+                    "type": "text",
+                    "text": json.dumps({
+                        "connected": True,
+                        "driver": "playwright",
+                        "sessions": playwright_manager.list_sessions()
+                    }, indent=2)
+                }]
+            }
+
+        else:
+            result = {"success": False, "error": f"Tool {tool_name} não implementada no Playwright"}
+
+        # Formatar resposta
+        if result.get("success"):
+            return {
+                "content": [{
+                    "type": "text",
+                    "text": json.dumps(result, indent=2, ensure_ascii=False)
+                }]
+            }
+        else:
+            return {
+                "content": [{
+                    "type": "text",
+                    "text": json.dumps(result, indent=2, ensure_ascii=False)
+                }],
+                "isError": True
+            }
+
+    except Exception as e:
+        logger.error(f"[MCP] Playwright error for {tool_name}: {e}")
+        return {
+            "content": [{
+                "type": "text",
+                "text": json.dumps({"error": str(e)}, indent=2)
+            }],
+            "isError": True
+        }
+
+
 async def handle_call_tool(params: dict) -> dict:
     """Handle MCP tools/call request - executa ferramenta via extensão Chrome."""
     tool_name = params.get("name")
@@ -349,14 +440,19 @@ async def handle_call_tool(params: dict) -> dict:
     if tool_name in LOCAL_TOOLS:
         return await handle_local_tool(tool_name, tool_args)
 
-    # Verificar se há extensão conectada
+    # Verificar se há extensão conectada OU se Playwright está disponível
     if not ws_manager.is_connected():
+        # Tentar usar Playwright como fallback
+        if PLAYWRIGHT_AVAILABLE and playwright_manager:
+            logger.info(f"[MCP] Using Playwright fallback for {tool_name}")
+            return await handle_playwright_tool(tool_name, tool_args, session_id)
+
         available_sessions = ws_manager.list_sessions()
         return {
             "content": [{
                 "type": "text",
                 "text": json.dumps({
-                    "error": "Nenhuma extensão Chrome conectada",
+                    "error": "Nenhuma extensão Chrome conectada e Playwright não disponível",
                     "action_required": "Use sei_wait_for_extension ou sei_open_url primeiro",
                     "recommended_flow": [
                         "1. Chame sei_wait_for_extension com open_url da página do SEI",
@@ -364,6 +460,7 @@ async def handle_call_tool(params: dict) -> dict:
                         "3. Então execute o comando desejado"
                     ],
                     "alternative": "Use sei_open_url para apenas abrir o navegador (sem automação)",
+                    "playwright_available": PLAYWRIGHT_AVAILABLE,
                     "available_sessions": available_sessions
                 }, indent=2, ensure_ascii=False)
             }],

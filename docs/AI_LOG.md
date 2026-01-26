@@ -186,3 +186,70 @@ python scripts/setup_stripe_products.py
 2. Configurar webhook no Stripe Dashboard
 3. Configurar variaveis no Render
 4. Testar checkout com cartao de teste (4242 4242 4242 4242)
+
+---
+
+## 2026-01-26 - Sistema Unificado de API Tokens e Debug Endpoints
+
+### Objetivo
+Implementar sistema unificado de API tokens para autenticação de clientes MCP, funcionando tanto para sei-mcp quanto para extensão Chrome.
+
+### Arquivos Alterados
+
+#### `app/models/user.py`
+- Adicionado campo `api_token_hash` para armazenar hash do token
+- Adicionado campo `api_token_created_at` para timestamp
+- Adicionado índice para busca rápida por token
+
+#### `app/api/endpoints/auth.py`
+- Novo endpoint `POST /auth/api-token/generate` - Gera novo API token
+- Novo endpoint `POST /auth/api-token/revoke` - Revoga API token
+- Novo endpoint `POST /auth/api-token/validate` - Valida token (para uso externo)
+- Schemas: ApiTokenResponse, ValidateTokenRequest, ValidateTokenResponse
+
+#### `app/api/endpoints/usage.py`
+- Adicionada função `get_email_from_token()` para extrair email de Bearer token
+- Endpoints `/usage/record` e `/usage/check` agora aceitam Bearer token
+- Mantida compatibilidade com email no body (legacy)
+
+#### `app/database.py`
+- Adicionada migration 003 para criar colunas api_token_hash e api_token_created_at
+- Migration roda automaticamente no startup
+
+#### `app/main.py`
+- Adicionado endpoint `GET /debug/db-schema` - Verifica estrutura da tabela
+- Adicionado endpoint `POST /debug/run-migration` - Executa migration manualmente
+
+#### `migrations/003_add_api_token.sql`
+- Script SQL para adicionar colunas (referência)
+
+### Fluxo de Autenticação por API Token
+
+1. Usuário faz login (Google OAuth ou email/senha)
+2. Usuário gera API token via `/auth/api-token/generate`
+3. Token é mostrado apenas uma vez (hash é armazenado)
+4. Cliente MCP usa token como `Authorization: Bearer <token>`
+5. Endpoints de usage validam token e extraem email do usuário
+
+### Integração com sei-mcp
+
+Arquivos atualizados no sei-mcp:
+- `src/http/auth.ts` - Funções para validar token e registrar uso via API licensing
+- `.env` - Configurado com credenciais do Render
+
+### Configuração Claude Desktop
+
+Duas opções disponíveis:
+- `sei-mcp` - Via Render (usa extensão/WebSocket)
+- `sei-mcp-local` - Local com Playwright (independente de extensão)
+
+### Problemas em Investigação
+- Endpoint `/auth/api-token/validate` retornando 500 error
+- Possível causa: migration não executando corretamente no startup
+- Debug endpoints adicionados para investigar
+
+### Próximos Passos
+1. Verificar se debug endpoints foram deployados
+2. Executar `/debug/run-migration` para forçar migration
+3. Testar endpoints de API token
+4. Atualizar extensão para gerar e usar API tokens

@@ -281,11 +281,11 @@ async def google_callback(
     code: Annotated[str, Query()],
     state: Annotated[str, Query()],
     db: AsyncSession = Depends(get_db),
-) -> TokenResponse:
+):
     """
     Handle Google OAuth callback.
 
-    Exchanges the authorization code for tokens and creates/updates the user.
+    Exchanges the authorization code for tokens and redirects to the app.
 
     Args:
         request: The incoming request
@@ -294,15 +294,14 @@ async def google_callback(
         db: Database session
 
     Returns:
-        JWT access and refresh tokens
+        Redirect to app with tokens in URL params
     """
+    from urllib.parse import urlencode
+
     # Verify state parameter
     stored_state = request.cookies.get("oauth_state")
     if not stored_state or stored_state != state or not verify_state(state):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid state parameter",
-        )
+        return RedirectResponse(url="/?error=invalid_state")
 
     try:
         # Exchange code for token
@@ -310,18 +309,12 @@ async def google_callback(
         token = await oauth.google.authorize_access_token(request)
 
         if not token:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Failed to get access token from Google",
-            )
+            return RedirectResponse(url="/?error=no_token")
 
         # Get user info from token
         userinfo = token.get("userinfo")
         if not userinfo:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Failed to get user info from Google",
-            )
+            return RedirectResponse(url="/?error=no_userinfo")
 
         google_id = userinfo.get("sub")
         email = userinfo.get("email")
@@ -329,10 +322,7 @@ async def google_callback(
         picture = userinfo.get("picture")
 
         if not email:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Email not provided by Google",
-            )
+            return RedirectResponse(url="/?error=no_email")
 
         # Find or create user
         result = await db.execute(
@@ -367,19 +357,17 @@ async def google_callback(
         user.refresh_token_hash = sha256(refresh_token.encode()).hexdigest()
         await db.commit()
 
-        return TokenResponse(
-            access_token=access_token,
-            refresh_token=refresh_token,
-            expires_in=settings.jwt_access_token_expire_minutes * 60,
-        )
+        # Redirect to app with tokens
+        params = urlencode({
+            "access_token": access_token,
+            "refresh_token": refresh_token,
+        })
+        return RedirectResponse(url=f"/?{params}")
 
-    except HTTPException:
-        raise
     except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"OAuth error: {str(e)}",
-        )
+        import logging
+        logging.getLogger(__name__).error(f"OAuth callback error: {e}")
+        return RedirectResponse(url=f"/?error=oauth_error")
 
 
 @router.post("/google/callback", response_model=TokenResponse)

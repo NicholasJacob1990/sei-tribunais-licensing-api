@@ -1,0 +1,632 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SEI-MCP - Painel do Usuario</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            min-height: 100vh;
+            color: #fff;
+        }
+        .container { max-width: 800px; margin: 0 auto; padding: 40px 20px; }
+        .logo { text-align: center; margin-bottom: 30px; }
+        .logo h1 {
+            font-size: 2.5rem;
+            background: linear-gradient(90deg, #4facfe, #00f2fe);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        .logo p { color: #8892b0; margin-top: 10px; }
+        .card {
+            background: rgba(255,255,255,0.05);
+            border-radius: 16px;
+            padding: 30px;
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255,255,255,0.1);
+            margin-bottom: 20px;
+        }
+        .card h2 { color: #4facfe; margin-bottom: 20px; font-size: 1.3rem; }
+        .tabs { display: flex; margin-bottom: 25px; border-bottom: 1px solid rgba(255,255,255,0.1); }
+        .tab {
+            flex: 1; padding: 12px; text-align: center;
+            cursor: pointer; color: #8892b0; transition: all 0.3s;
+        }
+        .tab.active { color: #4facfe; border-bottom: 2px solid #4facfe; }
+        .form-group { margin-bottom: 20px; }
+        .form-group label { display: block; margin-bottom: 8px; color: #8892b0; font-size: 14px; }
+        .form-group input {
+            width: 100%; padding: 14px; border-radius: 8px;
+            border: 1px solid rgba(255,255,255,0.1);
+            background: rgba(255,255,255,0.05); color: #fff; font-size: 16px;
+        }
+        .form-group input:focus { outline: none; border-color: #4facfe; }
+        .btn {
+            padding: 14px 24px; border-radius: 8px; border: none;
+            font-size: 16px; font-weight: 600; cursor: pointer; transition: all 0.3s;
+        }
+        .btn-block { width: 100%; }
+        .btn-primary { background: linear-gradient(90deg, #4facfe, #00f2fe); color: #1a1a2e; }
+        .btn-primary:hover { transform: translateY(-2px); box-shadow: 0 10px 30px rgba(79,172,254,0.3); }
+        .btn-google {
+            background: #fff; color: #333;
+            display: flex; align-items: center; justify-content: center; gap: 10px;
+            margin-bottom: 20px; width: 100%;
+        }
+        .btn-stripe { background: linear-gradient(90deg, #635bff, #a259ff); color: #fff; }
+        .btn-danger { background: #ff5252; color: #fff; }
+        .btn-outline {
+            background: transparent; border: 1px solid rgba(255,255,255,0.2); color: #8892b0;
+        }
+        .divider {
+            text-align: center; margin: 20px 0; color: #8892b0; position: relative;
+        }
+        .divider::before, .divider::after {
+            content: ''; position: absolute; top: 50%; width: 40%; height: 1px;
+            background: rgba(255,255,255,0.1);
+        }
+        .divider::before { left: 0; }
+        .divider::after { right: 0; }
+        .msg { padding: 12px; border-radius: 8px; margin-bottom: 20px; display: none; }
+        .error { background: rgba(255,82,82,0.2); border: 1px solid rgba(255,82,82,0.5); color: #ff5252; }
+        .success { background: rgba(76,175,80,0.2); border: 1px solid rgba(76,175,80,0.5); color: #4caf50; }
+        .hidden { display: none !important; }
+        /* User section */
+        .user-header {
+            display: flex; align-items: center; gap: 15px; margin-bottom: 25px;
+            padding-bottom: 20px; border-bottom: 1px solid rgba(255,255,255,0.1);
+        }
+        .user-avatar {
+            width: 60px; height: 60px; border-radius: 50%;
+            background: linear-gradient(90deg, #4facfe, #00f2fe);
+            display: flex; align-items: center; justify-content: center; font-size: 24px;
+        }
+        .user-avatar img { width: 100%; height: 100%; border-radius: 50%; }
+        .user-details h3 { font-size: 18px; }
+        .user-details p { color: #8892b0; font-size: 14px; }
+        /* License badge */
+        .badge {
+            display: inline-block; padding: 4px 12px; border-radius: 20px;
+            font-size: 12px; font-weight: 600; text-transform: uppercase;
+        }
+        .badge-free { background: rgba(158,158,158,0.3); color: #9e9e9e; }
+        .badge-trial { background: rgba(255,193,7,0.3); color: #ffc107; }
+        .badge-pro { background: rgba(79,172,254,0.3); color: #4facfe; }
+        .badge-enterprise { background: rgba(156,39,176,0.3); color: #9c27b0; }
+        /* Stats grid */
+        .stats-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px; margin-bottom: 25px; }
+        .stat-card {
+            background: rgba(0,0,0,0.2); border-radius: 12px; padding: 20px; text-align: center;
+        }
+        .stat-value { font-size: 2rem; font-weight: 700; color: #4facfe; }
+        .stat-label { color: #8892b0; font-size: 12px; margin-top: 5px; }
+        /* Token section */
+        .token-box {
+            background: rgba(0,0,0,0.3); border-radius: 8px; padding: 15px;
+            font-family: monospace; word-break: break-all; font-size: 14px;
+            position: relative; margin-top: 15px;
+        }
+        .token-box.blur { filter: blur(5px); user-select: none; }
+        .copy-btn {
+            position: absolute; top: 10px; right: 10px;
+            background: #4facfe; border: none; padding: 6px 12px;
+            border-radius: 4px; cursor: pointer; font-size: 12px; color: #1a1a2e;
+        }
+        /* Plans */
+        .plans-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 20px; }
+        .plan-card {
+            background: rgba(0,0,0,0.2); border-radius: 12px; padding: 25px;
+            border: 2px solid transparent; transition: all 0.3s;
+        }
+        .plan-card:hover { border-color: rgba(79,172,254,0.3); }
+        .plan-card.current { border-color: #4facfe; }
+        .plan-name { font-size: 1.2rem; font-weight: 600; margin-bottom: 10px; }
+        .plan-price { font-size: 2rem; font-weight: 700; color: #4facfe; }
+        .plan-price span { font-size: 0.9rem; color: #8892b0; }
+        .plan-features { list-style: none; margin: 20px 0; }
+        .plan-features li { padding: 8px 0; color: #ccd6f6; font-size: 14px; }
+        .plan-features li::before { content: '✓ '; color: #4facfe; }
+        /* Instructions */
+        .instructions {
+            margin-top: 25px; padding: 20px;
+            background: rgba(79,172,254,0.1); border-radius: 8px;
+            border: 1px solid rgba(79,172,254,0.3);
+        }
+        .instructions h4 { color: #4facfe; margin-bottom: 15px; }
+        .instructions code {
+            background: rgba(0,0,0,0.3); padding: 2px 6px; border-radius: 4px; font-size: 13px;
+        }
+        .instructions ol { padding-left: 20px; }
+        .instructions li { margin-bottom: 10px; color: #ccd6f6; }
+        /* Progress bar */
+        .progress-bar { background: rgba(255,255,255,0.1); border-radius: 10px; height: 10px; overflow: hidden; }
+        .progress-fill { background: linear-gradient(90deg, #4facfe, #00f2fe); height: 100%; transition: width 0.3s; }
+        .progress-text { display: flex; justify-content: space-between; margin-top: 8px; font-size: 12px; color: #8892b0; }
+        /* Loading */
+        .loading { display: inline-block; width: 20px; height: 20px; border: 2px solid transparent; border-top: 2px solid currentColor; border-radius: 50%; animation: spin 1s linear infinite; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        @media (max-width: 600px) {
+            .stats-grid, .plans-grid { grid-template-columns: 1fr; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="logo">
+            <h1>SEI-MCP</h1>
+            <p>Automacao do SEI com Inteligencia Artificial</p>
+        </div>
+
+        <!-- Error/Success Messages -->
+        <div class="msg error" id="errorMsg"></div>
+        <div class="msg success" id="successMsg"></div>
+
+        <!-- Auth Section (not logged in) -->
+        <div class="card" id="authSection">
+            <div class="tabs">
+                <div class="tab active" data-tab="login">Entrar</div>
+                <div class="tab" data-tab="register">Criar Conta</div>
+            </div>
+
+            <button class="btn btn-google" id="googleBtn">
+                <svg width="20" height="20" viewBox="0 0 24 24">
+                    <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
+                    <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
+                    <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/>
+                    <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/>
+                </svg>
+                Continuar com Google
+            </button>
+
+            <div class="divider">ou</div>
+
+            <form id="loginForm">
+                <div class="form-group">
+                    <label>Email</label>
+                    <input type="email" id="loginEmail" required placeholder="seu@email.com">
+                </div>
+                <div class="form-group">
+                    <label>Senha</label>
+                    <input type="password" id="loginPassword" required placeholder="••••••••">
+                </div>
+                <button type="submit" class="btn btn-primary btn-block">Entrar</button>
+            </form>
+
+            <form id="registerForm" class="hidden">
+                <div class="form-group">
+                    <label>Nome</label>
+                    <input type="text" id="registerName" required placeholder="Seu nome">
+                </div>
+                <div class="form-group">
+                    <label>Email</label>
+                    <input type="email" id="registerEmail" required placeholder="seu@email.com">
+                </div>
+                <div class="form-group">
+                    <label>Senha</label>
+                    <input type="password" id="registerPassword" required placeholder="Minimo 6 caracteres">
+                </div>
+                <button type="submit" class="btn btn-primary btn-block">Criar Conta</button>
+            </form>
+        </div>
+
+        <!-- Dashboard (logged in) -->
+        <div id="dashboard" class="hidden">
+            <!-- User Info Card -->
+            <div class="card">
+                <div class="user-header">
+                    <div class="user-avatar" id="userAvatar"><span id="avatarInitial">U</span></div>
+                    <div class="user-details">
+                        <h3 id="userName">Usuario</h3>
+                        <p id="userEmail">email@exemplo.com</p>
+                    </div>
+                    <div style="margin-left:auto;">
+                        <span class="badge badge-free" id="licenseBadge">FREE</span>
+                    </div>
+                </div>
+
+                <!-- Usage Stats -->
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <div class="stat-value" id="usedToday">0</div>
+                        <div class="stat-label">Usado Hoje</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value" id="remaining">0</div>
+                        <div class="stat-label">Restante</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value" id="limit">50</div>
+                        <div class="stat-label">Limite Diario</div>
+                    </div>
+                </div>
+
+                <!-- Progress bar -->
+                <div class="progress-bar">
+                    <div class="progress-fill" id="usageProgress" style="width: 0%"></div>
+                </div>
+                <div class="progress-text">
+                    <span id="progressLabel">0 de 50 operacoes</span>
+                    <span id="progressPercent">0%</span>
+                </div>
+
+                <div style="margin-top:20px; display:flex; gap:10px;">
+                    <button class="btn btn-stripe" id="upgradeBtn" style="flex:1;">Fazer Upgrade</button>
+                    <button class="btn btn-outline" id="portalBtn">Gerenciar Assinatura</button>
+                </div>
+            </div>
+
+            <!-- API Token Card -->
+            <div class="card">
+                <h2>Seu API Token</h2>
+                <p style="color:#8892b0;margin-bottom:15px;font-size:14px;">
+                    Use este token para conectar o Claude Desktop ou extensao Chrome ao SEI-MCP
+                </p>
+
+                <button class="btn btn-primary" id="generateTokenBtn">Gerar Novo Token</button>
+
+                <div class="token-box blur" id="tokenBox">
+                    <span id="tokenValue">Clique em "Gerar Novo Token"</span>
+                    <button class="copy-btn hidden" id="copyBtn">Copiar</button>
+                </div>
+
+                <div class="instructions">
+                    <h4>Como usar</h4>
+                    <ol>
+                        <li><strong>Claude Desktop:</strong> Adicione a URL do MCP nas configuracoes:
+                            <code style="display:block;margin-top:5px;padding:8px;">https://sei-tribunais-licensing-api.onrender.com/mcp</code>
+                            Com header: <code>Authorization: Bearer SEU_TOKEN</code>
+                        </li>
+                        <li><strong>Extensao Chrome:</strong> Cole o token nas configuracoes da extensao</li>
+                    </ol>
+                </div>
+            </div>
+
+            <!-- Plans Card -->
+            <div class="card" id="plansCard">
+                <h2>Planos Disponiveis</h2>
+                <div class="plans-grid" id="plansGrid">
+                    <!-- Plans loaded dynamically -->
+                </div>
+            </div>
+
+            <button class="btn btn-outline btn-block" id="logoutBtn" style="margin-top:20px;">Sair</button>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = '/api/v1';
+        let accessToken = localStorage.getItem('accessToken');
+        let refreshToken = localStorage.getItem('refreshToken');
+        let currentUser = null;
+        let currentLicenses = [];
+
+        // Init
+        if (accessToken) {
+            loadDashboard();
+        }
+
+        // Check URL params (OAuth callback)
+        const urlParams = new URLSearchParams(window.location.search);
+        if (urlParams.has('access_token')) {
+            saveTokens(urlParams.get('access_token'), urlParams.get('refresh_token'));
+            window.history.replaceState({}, document.title, window.location.pathname);
+            loadDashboard();
+        }
+        if (urlParams.has('error')) {
+            showError('Erro no login: ' + urlParams.get('error'));
+        }
+
+        // Tab switching
+        document.querySelectorAll('.tab').forEach(tab => {
+            tab.addEventListener('click', () => {
+                document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+                tab.classList.add('active');
+                document.getElementById('loginForm').classList.toggle('hidden', tab.dataset.tab !== 'login');
+                document.getElementById('registerForm').classList.toggle('hidden', tab.dataset.tab !== 'register');
+            });
+        });
+
+        // Google Login
+        document.getElementById('googleBtn').addEventListener('click', () => {
+            window.location.href = `${API_BASE}/auth/google/login`;
+        });
+
+        // Email Login
+        document.getElementById('loginForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            hideMessages();
+            const email = document.getElementById('loginEmail').value;
+            const password = document.getElementById('loginPassword').value;
+
+            try {
+                const res = await fetch(`${API_BASE}/auth/login`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email, password })
+                });
+                const data = await res.json();
+                if (res.ok) {
+                    saveTokens(data.access_token, data.refresh_token);
+                    loadDashboard();
+                } else {
+                    showError(data.detail || 'Erro ao fazer login');
+                }
+            } catch (err) {
+                showError('Erro de conexao');
+            }
+        });
+
+        // Email Register
+        document.getElementById('registerForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            hideMessages();
+            const name = document.getElementById('registerName').value;
+            const email = document.getElementById('registerEmail').value;
+            const password = document.getElementById('registerPassword').value;
+
+            try {
+                const res = await fetch(`${API_BASE}/auth/register`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name, email, password })
+                });
+                const data = await res.json();
+                if (res.ok) {
+                    saveTokens(data.access_token, data.refresh_token);
+                    loadDashboard();
+                } else {
+                    showError(data.detail || 'Erro ao registrar');
+                }
+            } catch (err) {
+                showError('Erro de conexao');
+            }
+        });
+
+        // Generate Token
+        document.getElementById('generateTokenBtn').addEventListener('click', async () => {
+            const btn = document.getElementById('generateTokenBtn');
+            btn.innerHTML = '<span class="loading"></span> Gerando...';
+            btn.disabled = true;
+
+            try {
+                const res = await fetch(`${API_BASE}/auth/api-token/generate`, {
+                    method: 'POST',
+                    headers: { 'Authorization': `Bearer ${accessToken}`, 'Content-Type': 'application/json' }
+                });
+                const data = await res.json();
+                if (res.ok) {
+                    document.getElementById('tokenValue').textContent = data.api_token;
+                    document.getElementById('tokenBox').classList.remove('blur');
+                    document.getElementById('copyBtn').classList.remove('hidden');
+                    showSuccess('Token gerado! Guarde em local seguro.');
+                } else {
+                    showError(data.detail || 'Erro ao gerar token');
+                }
+            } catch (err) {
+                showError('Erro de conexao');
+            } finally {
+                btn.innerHTML = 'Gerar Novo Token';
+                btn.disabled = false;
+            }
+        });
+
+        // Copy Token
+        document.getElementById('copyBtn').addEventListener('click', () => {
+            const token = document.getElementById('tokenValue').textContent;
+            navigator.clipboard.writeText(token);
+            document.getElementById('copyBtn').textContent = 'Copiado!';
+            setTimeout(() => document.getElementById('copyBtn').textContent = 'Copiar', 2000);
+        });
+
+        // Upgrade
+        document.getElementById('upgradeBtn').addEventListener('click', async () => {
+            try {
+                const res = await fetch(`${API_BASE}/checkout/create`, {
+                    method: 'POST',
+                    headers: { 'Authorization': `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email: currentUser.email, plan: 'professional', interval: 'month' })
+                });
+                const data = await res.json();
+                if (res.ok && data.checkout_url) {
+                    window.location.href = data.checkout_url;
+                } else {
+                    showError(data.detail || 'Erro ao criar checkout');
+                }
+            } catch (err) {
+                showError('Erro de conexao');
+            }
+        });
+
+        // Portal
+        document.getElementById('portalBtn').addEventListener('click', async () => {
+            try {
+                const res = await fetch(`${API_BASE}/portal/create`, {
+                    method: 'POST',
+                    headers: { 'Authorization': `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email: currentUser.email })
+                });
+                const data = await res.json();
+                if (res.ok && data.portal_url) {
+                    window.location.href = data.portal_url;
+                } else {
+                    showError(data.detail || 'Erro ao criar portal');
+                }
+            } catch (err) {
+                showError('Erro de conexao');
+            }
+        });
+
+        // Logout
+        document.getElementById('logoutBtn').addEventListener('click', () => {
+            localStorage.removeItem('accessToken');
+            localStorage.removeItem('refreshToken');
+            accessToken = null;
+            currentUser = null;
+            document.getElementById('authSection').classList.remove('hidden');
+            document.getElementById('dashboard').classList.add('hidden');
+        });
+
+        // Load Dashboard
+        async function loadDashboard() {
+            try {
+                // Get user info
+                const userRes = await fetch(`${API_BASE}/auth/me`, {
+                    headers: { 'Authorization': `Bearer ${accessToken}` }
+                });
+
+                if (!userRes.ok) {
+                    if (userRes.status === 401) {
+                        localStorage.removeItem('accessToken');
+                        localStorage.removeItem('refreshToken');
+                        return;
+                    }
+                    throw new Error('Failed to load user');
+                }
+
+                const userData = await userRes.json();
+                currentUser = userData.user;
+                currentLicenses = userData.licenses || [];
+
+                displayUser(currentUser);
+                displayLicenses(currentLicenses);
+
+                // Get usage
+                await loadUsage();
+
+                // Get plans
+                await loadPlans();
+
+                document.getElementById('authSection').classList.add('hidden');
+                document.getElementById('dashboard').classList.remove('hidden');
+            } catch (err) {
+                console.error('Dashboard load error:', err);
+                showError('Erro ao carregar dashboard');
+            }
+        }
+
+        function displayUser(user) {
+            document.getElementById('userName').textContent = user.name;
+            document.getElementById('userEmail').textContent = user.email;
+            if (user.picture) {
+                document.getElementById('userAvatar').innerHTML = `<img src="${user.picture}" alt="">`;
+            } else {
+                document.getElementById('avatarInitial').textContent = user.name.charAt(0).toUpperCase();
+            }
+        }
+
+        function displayLicenses(licenses) {
+            const badge = document.getElementById('licenseBadge');
+            const activeLicense = licenses.find(l => l.is_active);
+
+            if (activeLicense) {
+                const plan = activeLicense.plan.toUpperCase();
+                badge.textContent = plan;
+                badge.className = `badge badge-${plan.toLowerCase()}`;
+
+                if (plan !== 'FREE') {
+                    document.getElementById('upgradeBtn').textContent = 'Plano Atual: ' + plan;
+                    document.getElementById('upgradeBtn').disabled = true;
+                }
+            } else {
+                badge.textContent = 'FREE';
+                badge.className = 'badge badge-free';
+            }
+        }
+
+        async function loadUsage() {
+            try {
+                const res = await fetch(`${API_BASE}/usage/check`, {
+                    method: 'POST',
+                    headers: { 'Authorization': `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ product: 'sei-mcp' })
+                });
+                const data = await res.json();
+
+                const used = data.used_today || 0;
+                const remaining = data.remaining || 0;
+                const limit = data.limit || 50;
+                const unlimited = data.unlimited || false;
+
+                document.getElementById('usedToday').textContent = used;
+                document.getElementById('remaining').textContent = unlimited ? '∞' : remaining;
+                document.getElementById('limit').textContent = unlimited ? '∞' : limit;
+
+                const percent = unlimited ? 0 : Math.min(100, (used / limit) * 100);
+                document.getElementById('usageProgress').style.width = percent + '%';
+                document.getElementById('progressLabel').textContent = unlimited ? 'Uso ilimitado' : `${used} de ${limit} operacoes`;
+                document.getElementById('progressPercent').textContent = unlimited ? '' : Math.round(percent) + '%';
+            } catch (err) {
+                console.error('Usage load error:', err);
+            }
+        }
+
+        async function loadPlans() {
+            try {
+                const res = await fetch(`${API_BASE}/checkout/plans`);
+                const plans = await res.json();
+
+                const grid = document.getElementById('plansGrid');
+                grid.innerHTML = plans.map(plan => `
+                    <div class="plan-card ${currentLicenses.some(l => l.plan === plan.id && l.is_active) ? 'current' : ''}">
+                        <div class="plan-name">${plan.name}</div>
+                        <div class="plan-price">R$ ${plan.price_monthly}<span>/mes</span></div>
+                        <ul class="plan-features">
+                            <li>${plan.requests_per_month === -1 ? 'Ilimitado' : plan.requests_per_month + ' operacoes/mes'}</li>
+                            ${plan.features ? plan.features.map(f => `<li>${f}</li>`).join('') : ''}
+                        </ul>
+                        ${plan.id !== 'free' ? `<button class="btn btn-stripe btn-block" onclick="selectPlan('${plan.id}')">Assinar</button>` : ''}
+                    </div>
+                `).join('');
+            } catch (err) {
+                console.error('Plans load error:', err);
+            }
+        }
+
+        async function selectPlan(planId) {
+            try {
+                const res = await fetch(`${API_BASE}/checkout/create`, {
+                    method: 'POST',
+                    headers: { 'Authorization': `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email: currentUser.email, plan: planId, interval: 'month' })
+                });
+                const data = await res.json();
+                if (res.ok && data.checkout_url) {
+                    window.location.href = data.checkout_url;
+                }
+            } catch (err) {
+                showError('Erro ao criar checkout');
+            }
+        }
+
+        // Helpers
+        function saveTokens(access, refresh) {
+            accessToken = access;
+            refreshToken = refresh;
+            localStorage.setItem('accessToken', access);
+            localStorage.setItem('refreshToken', refresh);
+        }
+
+        function showError(msg) {
+            const el = document.getElementById('errorMsg');
+            el.textContent = msg;
+            el.style.display = 'block';
+            setTimeout(() => el.style.display = 'none', 5000);
+        }
+
+        function showSuccess(msg) {
+            const el = document.getElementById('successMsg');
+            el.textContent = msg;
+            el.style.display = 'block';
+            setTimeout(() => el.style.display = 'none', 5000);
+        }
+
+        function hideMessages() {
+            document.getElementById('errorMsg').style.display = 'none';
+            document.getElementById('successMsg').style.display = 'none';
+        }
+    </script>
+</body>
+</html>
