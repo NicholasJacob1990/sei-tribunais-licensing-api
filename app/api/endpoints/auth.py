@@ -1,5 +1,5 @@
 """
-Authentication endpoints for Google OAuth
+Authentication endpoints for Google OAuth and Email/Password
 """
 from datetime import datetime
 from hashlib import sha256
@@ -7,8 +7,9 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import RedirectResponse
-from pydantic import BaseModel
-from sqlalchemy import select
+from passlib.context import CryptContext
+from pydantic import BaseModel, EmailStr
+from sqlalchemy import select, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.requests import Request
 
@@ -27,6 +28,19 @@ from app.auth.dependencies import get_current_user, CurrentUser
 
 router = APIRouter(prefix="/auth", tags=["authentication"])
 
+# Password hashing context
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+
+def hash_password(password: str) -> str:
+    """Hash password using bcrypt."""
+    return pwd_context.hash(password)
+
+
+def verify_password(password: str, password_hash: str) -> bool:
+    """Verify password against hash."""
+    return pwd_context.verify(password, password_hash)
+
 
 # ============================================================================
 # Schemas
@@ -44,6 +58,27 @@ class TokenResponse(BaseModel):
 class RefreshTokenRequest(BaseModel):
     """Request to refresh access token."""
     refresh_token: str
+
+
+class LoginRequest(BaseModel):
+    """Request for email/password login."""
+    email: EmailStr
+    password: str
+
+
+class RegisterRequest(BaseModel):
+    """Request for email/password registration."""
+    email: EmailStr
+    password: str
+    name: str | None = None
+
+
+class GoogleCallbackRequest(BaseModel):
+    """Request for Google OAuth callback from Chrome extension."""
+    google_token: str
+    email: EmailStr
+    name: str | None = None
+    picture: str | None = None
 
 
 class UserResponse(BaseModel):
@@ -66,6 +101,130 @@ class UserWithLicensesResponse(BaseModel):
 # ============================================================================
 # Endpoints
 # ============================================================================
+
+
+@router.post("/register", response_model=TokenResponse)
+async def register_with_email(
+    request: RegisterRequest,
+    db: AsyncSession = Depends(get_db),
+) -> TokenResponse:
+    """
+    Register a new user with email and password.
+
+    Args:
+        request: Registration request with email, password, and optional name
+        db: Database session
+
+    Returns:
+        JWT access and refresh tokens
+    """
+    # Check if email already exists
+    result = await db.execute(
+        select(User).where(User.email == request.email)
+    )
+    existing_user = result.scalar_one_or_none()
+
+    if existing_user:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Email already registered",
+        )
+
+    # Validate password
+    if len(request.password) < 6:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Password must be at least 6 characters",
+        )
+
+    # Create user
+    user = User(
+        email=request.email,
+        name=request.name or request.email.split("@")[0],
+        password_hash=hash_password(request.password),
+        last_login_at=datetime.utcnow(),
+    )
+    db.add(user)
+    await db.flush()
+
+    # Create tokens
+    access_token = create_access_token({"sub": user.id, "email": user.email})
+    refresh_token = create_refresh_token({"sub": user.id})
+
+    # Store refresh token hash
+    user.refresh_token_hash = sha256(refresh_token.encode()).hexdigest()
+    await db.commit()
+
+    return TokenResponse(
+        access_token=access_token,
+        refresh_token=refresh_token,
+        expires_in=settings.jwt_access_token_expire_minutes * 60,
+    )
+
+
+@router.post("/login", response_model=TokenResponse)
+async def login_with_email(
+    request: LoginRequest,
+    db: AsyncSession = Depends(get_db),
+) -> TokenResponse:
+    """
+    Login with email and password.
+
+    Args:
+        request: Login request with email and password
+        db: Database session
+
+    Returns:
+        JWT access and refresh tokens
+    """
+    # Find user by email
+    result = await db.execute(
+        select(User).where(User.email == request.email)
+    )
+    user = result.scalar_one_or_none()
+
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid email or password",
+        )
+
+    # Check if user has password (might be Google-only user)
+    if not user.password_hash:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="This account uses Google login. Please use 'Login with Google'.",
+        )
+
+    # Verify password
+    if not verify_password(request.password, user.password_hash):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid email or password",
+        )
+
+    if not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Account is disabled",
+        )
+
+    # Update last login
+    user.last_login_at = datetime.utcnow()
+
+    # Create tokens
+    access_token = create_access_token({"sub": user.id, "email": user.email})
+    refresh_token = create_refresh_token({"sub": user.id})
+
+    # Store refresh token hash
+    user.refresh_token_hash = sha256(refresh_token.encode()).hexdigest()
+    await db.commit()
+
+    return TokenResponse(
+        access_token=access_token,
+        refresh_token=refresh_token,
+        expires_in=settings.jwt_access_token_expire_minutes * 60,
+    )
 
 
 @router.get("/google/login")
@@ -209,6 +368,100 @@ async def google_callback(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"OAuth error: {str(e)}",
+        )
+
+
+@router.post("/google/callback", response_model=TokenResponse)
+async def google_callback_post(
+    request: GoogleCallbackRequest,
+    db: AsyncSession = Depends(get_db),
+) -> TokenResponse:
+    """
+    Handle Google OAuth callback from Chrome extension.
+
+    The extension gets the Google token directly and sends it here
+    along with user info fetched from Google.
+
+    Args:
+        request: Google OAuth data from extension
+        db: Database session
+
+    Returns:
+        JWT access and refresh tokens
+    """
+    try:
+        # Verify token with Google
+        import httpx
+
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                "https://www.googleapis.com/oauth2/v2/userinfo",
+                headers={"Authorization": f"Bearer {request.google_token}"},
+            )
+
+            if response.status_code != 200:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Invalid Google token",
+                )
+
+            google_data = response.json()
+            google_id = google_data.get("id")
+            verified_email = google_data.get("email")
+
+            if not google_id or verified_email != request.email:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Token email mismatch",
+                )
+
+        # Find or create user
+        result = await db.execute(
+            select(User).where(
+                or_(User.google_id == google_id, User.email == request.email)
+            )
+        )
+        user = result.scalar_one_or_none()
+
+        if user:
+            # Update existing user
+            user.google_id = google_id
+            user.name = request.name or user.name
+            user.picture = request.picture or user.picture
+            user.last_login_at = datetime.utcnow()
+        else:
+            # Create new user
+            user = User(
+                google_id=google_id,
+                email=request.email,
+                name=request.name or request.email.split("@")[0],
+                picture=request.picture,
+                last_login_at=datetime.utcnow(),
+            )
+            db.add(user)
+
+        await db.flush()
+
+        # Create tokens
+        access_token = create_access_token({"sub": user.id, "email": user.email})
+        refresh_token = create_refresh_token({"sub": user.id})
+
+        # Store refresh token hash
+        user.refresh_token_hash = sha256(refresh_token.encode()).hexdigest()
+        await db.commit()
+
+        return TokenResponse(
+            access_token=access_token,
+            refresh_token=refresh_token,
+            expires_in=settings.jwt_access_token_expire_minutes * 60,
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Google auth error: {str(e)}",
         )
 
 

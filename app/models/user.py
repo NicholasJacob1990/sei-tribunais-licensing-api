@@ -15,7 +15,7 @@ class User(Base):
     """
     User model representing an authenticated user.
 
-    Users are created when they authenticate via Google OAuth.
+    Users can be created via Google OAuth or email/password registration.
     The email links users to their licenses.
     """
 
@@ -28,12 +28,18 @@ class User(Base):
         default=lambda: str(uuid4()),
     )
 
-    # Google OAuth fields
-    google_id: Mapped[str] = mapped_column(
+    # Google OAuth fields (optional for email/password users)
+    google_id: Mapped[str | None] = mapped_column(
         String(255),
-        nullable=False,
+        nullable=True,
         unique=True,
         index=True,
+    )
+
+    # Password field (optional for Google OAuth users)
+    password_hash: Mapped[str | None] = mapped_column(
+        String(255),
+        nullable=True,
     )
     email: Mapped[str] = mapped_column(
         String(255),

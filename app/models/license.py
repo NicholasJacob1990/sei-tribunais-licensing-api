@@ -38,9 +38,11 @@ class ProductType(str, Enum):
 class PlanId(str, Enum):
     """Plan ID enum."""
     FREE = "free"
-    PROFESSIONAL = "professional"
-    OFFICE = "office"
-    ENTERPRISE = "enterprise"
+    STARTER = "starter"
+    PRO = "pro"
+    PROFESSIONAL = "professional"  # Legacy
+    OFFICE = "office"  # Legacy
+    ENTERPRISE = "enterprise"  # Legacy
 
 
 class License(Base):

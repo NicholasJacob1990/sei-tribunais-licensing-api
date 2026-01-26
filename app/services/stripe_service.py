@@ -52,43 +52,53 @@ PLAN_CONFIGS: dict[PlanId, PlanConfig] = {
         name="Free",
         price_monthly_cents=0,
         price_yearly_cents=0,
-        requests_per_month=50,
+        requests_per_month=5,  # 5 operacoes/dia gratuitas
         features=[
-            "50 requisicoes/mes",
-            "Acesso basico a API",
-            "Suporte por email",
+            "5 operacoes/dia",
+            "Acesso basico",
         ],
     ),
+    PlanId.STARTER: PlanConfig(
+        plan_id=PlanId.STARTER,
+        name="Starter",
+        price_monthly_cents=2990,  # R$ 29,90
+        price_yearly_cents=29900,  # R$ 299,00 (2 meses gratis)
+        requests_per_month=20,  # 20 operacoes/dia
+        features=[
+            "20 operacoes/dia",
+            "Suporte por email",
+            "Atualizacoes automaticas",
+        ],
+    ),
+    PlanId.PRO: PlanConfig(
+        plan_id=PlanId.PRO,
+        name="Pro",
+        price_monthly_cents=4990,  # R$ 49,90
+        price_yearly_cents=49900,  # R$ 499,00 (2 meses gratis)
+        requests_per_month=-1,  # Ilimitado
+        features=[
+            "Operacoes ilimitadas",
+            "Suporte prioritario",
+            "Acesso a todas as funcionalidades",
+            "Atualizacoes prioritarias",
+        ],
+    ),
+    # Legacy plans (mantidos para compatibilidade)
     PlanId.PROFESSIONAL: PlanConfig(
         plan_id=PlanId.PROFESSIONAL,
         name="Professional",
-        price_monthly_cents=2990,  # R$ 29,90
-        price_yearly_cents=29900,  # R$ 299,00 (2 meses gratis)
+        price_monthly_cents=2990,
+        price_yearly_cents=29900,
         requests_per_month=500,
-        features=[
-            "500 requisicoes/mes",
-            "Acesso completo a API",
-            "Suporte prioritario",
-            "Webhooks personalizados",
-            "Dashboard de uso",
-        ],
+        features=["500 requisicoes/mes"],
     ),
     PlanId.ENTERPRISE: PlanConfig(
         plan_id=PlanId.ENTERPRISE,
         name="Enterprise",
-        price_monthly_cents=9990,  # R$ 99,90
-        price_yearly_cents=99900,  # R$ 999,00 (2 meses gratis)
-        requests_per_month=-1,  # Ilimitado
-        features=[
-            "Requisicoes ilimitadas",
-            "Acesso completo a API",
-            "Suporte dedicado 24/7",
-            "Webhooks personalizados",
-            "Dashboard avancado",
-            "API dedicada",
-            "SLA garantido",
-            "Integracao customizada",
-        ],
+        price_monthly_cents=9990,
+        price_yearly_cents=99900,
+        requests_per_month=-1,
+        features=["Requisicoes ilimitadas"],
     ),
 }
 
@@ -106,7 +116,12 @@ def _get_price_id(key: str, default: str = "") -> str:
 PRICE_IDS: dict[str, dict[str, str]] = {
     # Produto principal (Iudex API)
     "default": {
-        # FREE nao precisa de price_id (nao tem cobranca)
+        # Novos planos
+        "starter_monthly": _get_price_id("STARTER_MONTHLY", ""),
+        "starter_yearly": _get_price_id("STARTER_YEARLY", ""),
+        "pro_monthly": _get_price_id("PRO_MONTHLY", ""),
+        "pro_yearly": _get_price_id("PRO_YEARLY", ""),
+        # Legacy (mantidos para compatibilidade)
         "professional_monthly": _get_price_id("PROFESSIONAL_MONTHLY", "price_1Stbk5CvEJFyzDT1jUZofSDM"),
         "professional_yearly": _get_price_id("PROFESSIONAL_YEARLY", "price_1Stbk6CvEJFyzDT1gucqDDtL"),
         "enterprise_monthly": _get_price_id("ENTERPRISE_MONTHLY", "price_1Stbk7CvEJFyzDT1Ol3ucCbI"),
@@ -117,10 +132,13 @@ PRICE_IDS: dict[str, dict[str, str]] = {
 
 # Limites de requisicoes por plano (usado para validacao)
 PLAN_REQUEST_LIMITS: dict[PlanId, int] = {
-    PlanId.FREE: 50,
+    PlanId.FREE: 5,  # 5 operacoes/dia gratuitas
+    PlanId.STARTER: 20,  # 20 operacoes/dia
+    PlanId.PRO: -1,  # Ilimitado
+    # Legacy
     PlanId.PROFESSIONAL: 500,
-    PlanId.ENTERPRISE: -1,  # Ilimitado
-    PlanId.OFFICE: 500,  # Compatibilidade
+    PlanId.ENTERPRISE: -1,
+    PlanId.OFFICE: 500,
 }
 
 
