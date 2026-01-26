@@ -56,3 +56,57 @@ curl -X POST ".../deploys" -d '{"clearCache": "clear"}'
 
 ### Prevencao
 Sempre usar cache clear quando mudar dependencias (requirements.txt, package.json, etc.)
+
+---
+
+## 2026-01-26 - Database Race Conditions com Lazy Init
+
+### Problema
+Endpoints falham intermitentemente com "Database temporarily unavailable"
+
+### Causa Raiz
+O pattern de lazy initialization do engine/session factory sem lock adequado causava race conditions quando multiplas requests chegavam simultaneamente.
+
+### Solucao
+Usar **eager initialization** em vez de lazy:
+```python
+# ANTES (problematico)
+_engine = None
+def get_engine():
+    global _engine
+    if _engine is None:
+        _engine = _create_engine()  # Race condition aqui!
+    return _engine
+
+# DEPOIS (correto)
+engine = _create_engine()  # Inicializa ao carregar modulo
+```
+
+### Prevencao
+- Preferir eager initialization para singletons
+- Se lazy init for necessario, usar locks adequados
+- Simplicidade > complexidade de retry
+
+---
+
+## 2026-01-26 - Datetime Naive vs Aware
+
+### Problema
+Erro: "can't compare offset-naive and offset-aware datetimes"
+
+### Causa Raiz
+Campos do banco (TIMESTAMP WITH TIME ZONE) sao timezone-aware, mas `datetime.utcnow()` retorna naive.
+
+### Solucao
+```python
+# ANTES
+now = datetime.utcnow()  # naive (sem timezone)
+
+# DEPOIS
+from datetime import timezone
+now = datetime.now(timezone.utc)  # aware (com timezone)
+```
+
+### Prevencao
+- Sempre usar `datetime.now(timezone.utc)` em vez de `datetime.utcnow()`
+- Configurar linters para detectar uso de utcnow()
