@@ -28,31 +28,6 @@ from app.auth.dependencies import get_current_user, CurrentUser
 
 router = APIRouter(prefix="/auth", tags=["authentication"])
 
-
-@router.get("/debug-db")
-async def debug_db_in_auth(db: AsyncSession = Depends(get_db)):
-    """Debug endpoint to test get_db in auth router."""
-    from sqlalchemy import text
-    result = await db.execute(text("SELECT 1"))
-    return {"status": "OK", "result": result.scalar(), "module": "auth"}
-
-
-class SimpleRequest(BaseModel):
-    """Simple request for testing."""
-    message: str
-
-
-@router.post("/debug-db-post")
-async def debug_db_post_in_auth(
-    request: SimpleRequest,
-    db: AsyncSession = Depends(get_db),
-):
-    """Debug POST endpoint to test get_db with body."""
-    from sqlalchemy import text
-    result = await db.execute(text("SELECT 1"))
-    return {"status": "OK", "result": result.scalar(), "message": request.message}
-
-
 # Password hashing functions using bcrypt directly
 
 
@@ -128,113 +103,8 @@ class UserWithLicensesResponse(BaseModel):
 
 
 # ============================================================================
-# Debug Endpoints (using RegisterRequest)
-# ============================================================================
-
-
-@router.post("/debug-register-request")
-async def debug_register_request(
-    request: RegisterRequest,
-    db: AsyncSession = Depends(get_db),
-):
-    """Test RegisterRequest model with get_db."""
-    from sqlalchemy import text
-    result = await db.execute(text("SELECT 1"))
-    return {"status": "OK", "result": result.scalar(), "email": request.email}
-
-
-@router.post("/debug-register-no-db")
-async def debug_register_no_db(
-    request: RegisterRequest,
-):
-    """Test RegisterRequest model WITHOUT get_db."""
-    return {"status": "OK", "email": request.email, "name": request.name}
-
-
-@router.post("/debug-hash")
-async def debug_hash(request: RegisterRequest):
-    """Test password hashing."""
-    import sys
-    try:
-        pw_len = len(request.password)
-        pw_bytes = len(request.password.encode('utf-8'))
-        pw_hash = hash_password(request.password)
-        return {
-            "status": "OK",
-            "password_len": pw_len,
-            "password_bytes": pw_bytes,
-            "hash_prefix": pw_hash[:20] + "...",
-            "python_version": sys.version,
-        }
-    except Exception as e:
-        import traceback
-        return {
-            "status": "ERROR",
-            "error": str(e),
-            "type": type(e).__name__,
-            "password_len": len(request.password),
-            "password_bytes": len(request.password.encode('utf-8')),
-            "python_version": sys.version,
-            "traceback": traceback.format_exc()[:800],
-        }
-
-
-# ============================================================================
 # Endpoints
 # ============================================================================
-
-
-@router.post("/register-test")
-async def register_test(
-    request: RegisterRequest,
-    db: AsyncSession = Depends(get_db),
-):
-    """Simple test endpoint - step by step."""
-    try:
-        steps = []
-
-        # Step 1: Query
-        steps.append("querying")
-        result = await db.execute(
-            select(User).where(User.email == request.email)
-        )
-        existing_user = result.scalar_one_or_none()
-        steps.append("query_done")
-
-        if existing_user:
-            return {"status": "EXISTS", "email": request.email, "steps": steps}
-
-        # Step 2: Hash password (CPU-intensive, might block)
-        steps.append("hashing")
-        pw_hash = hash_password(request.password)
-        steps.append("hash_done")
-
-        # Step 3: Create User object
-        steps.append("creating_user")
-        user = User(
-            email=request.email,
-            name=request.name or request.email.split("@")[0],
-            password_hash=pw_hash,
-            last_login_at=datetime.utcnow(),
-        )
-        steps.append("user_created")
-
-        # Step 4: Add and flush
-        steps.append("adding")
-        db.add(user)
-        steps.append("flushing")
-        await db.flush()
-        steps.append("flush_done")
-
-        return {
-            "status": "CREATED",
-            "email": request.email,
-            "user_id": str(user.id),
-            "steps": steps,
-        }
-    except Exception as e:
-        import traceback
-        return {"status": "ERROR", "error": str(e), "type": type(e).__name__, "traceback": traceback.format_exc()[:500]}
 
 
 @router.post("/register", response_model=TokenResponse)
@@ -252,9 +122,6 @@ async def register_with_email(
     Returns:
         JWT access and refresh tokens
     """
-    import logging
-    logger = logging.getLogger(__name__)
-    logger.info(f"=== REGISTER ENDPOINT CALLED === email={request.email}")
     try:
         # Check if email already exists
         result = await db.execute(

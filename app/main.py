@@ -203,59 +203,6 @@ async def health_check():
     }
 
 
-@app.get("/debug/get-db-test")
-async def debug_get_db_test():
-    """Debug endpoint to test get_db dependency directly."""
-    from sqlalchemy import text
-    from app.database import get_db, get_session_factory
-    from app.config import settings as cfg
-
-    results = {
-        "database_url_masked": cfg.async_database_url[:50] + "..." if len(cfg.async_database_url) > 50 else cfg.async_database_url,
-        "environment": cfg.environment,
-        "is_production": cfg.is_production,
-        "tests": [],
-    }
-
-    # Test 1: Direct session factory (this works)
-    try:
-        factory = get_session_factory()
-        async with factory() as session:
-            await session.execute(text("SELECT 1"))
-            results["tests"].append({"name": "direct_factory", "status": "OK"})
-    except Exception as e:
-        results["tests"].append({"name": "direct_factory", "status": "ERROR", "error": str(e)})
-
-    # Test 2: get_db generator manually
-    try:
-        gen = get_db()
-        session = await gen.__anext__()
-        await session.execute(text("SELECT 1"))
-        results["tests"].append({"name": "get_db_manual", "status": "OK"})
-        # Close the generator properly
-        try:
-            await gen.__anext__()
-        except StopAsyncIteration:
-            pass
-    except Exception as e:
-        results["tests"].append({"name": "get_db_manual", "status": "ERROR", "error": str(e)})
-
-    return results
-
-
-from fastapi import Depends
-from sqlalchemy.ext.asyncio import AsyncSession
-from app.database import get_db
-
-
-@app.get("/debug/get-db-depends")
-async def debug_get_db_depends(db: AsyncSession = Depends(get_db)):
-    """Test get_db as FastAPI dependency."""
-    from sqlalchemy import text
-    result = await db.execute(text("SELECT 1"))
-    return {"status": "OK", "result": result.scalar()}
-
-
 @app.get("/debug/routers")
 async def debug_routers():
     """Debug endpoint to check router loading errors."""
