@@ -29,13 +29,11 @@ router = APIRouter(tags=["oauth"])
 _oauth_states: dict[str, dict] = {}
 _oauth_codes: dict[str, dict] = {}
 
-# OAuth Client for Claude Desktop
+# OAuth Client for Claude Desktop (fixed credentials)
 CLAUDE_CLIENT_ID = "claude-desktop-mcp"
-CLAUDE_CLIENT_SECRET = secrets.token_urlsafe(32)  # Generated on startup
+CLAUDE_CLIENT_SECRET = "sei-mcp-oauth-secret-2026"
 
-# Log the client secret on startup (for configuration)
 logger.info(f"OAuth Client ID: {CLAUDE_CLIENT_ID}")
-logger.info(f"OAuth Client Secret: {CLAUDE_CLIENT_SECRET}")
 
 
 class TokenResponse(BaseModel):
