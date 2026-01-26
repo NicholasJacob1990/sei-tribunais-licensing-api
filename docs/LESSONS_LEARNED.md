@@ -110,3 +110,57 @@ now = datetime.now(timezone.utc)  # aware (com timezone)
 ### Prevencao
 - Sempre usar `datetime.now(timezone.utc)` em vez de `datetime.utcnow()`
 - Configurar linters para detectar uso de utcnow()
+
+---
+
+## 2026-01-26 - OAuth State Mismatch com Authlib
+
+### Problema
+Google OAuth retornava "mismatching_state: CSRF Warning! State not equal in request and response"
+
+### Causa Raiz
+Authlib esperava o estado OAuth armazenado na sessão como dict, mas estava sendo armazenado como string. A função `authorize_access_token()` falhava silenciosamente.
+
+### Solucao
+Implementar a troca de token OAuth manualmente com httpx em vez de usar authlib:
+```python
+async def exchange_code_for_token(code: str, redirect_uri: str | None = None):
+    import httpx
+    token_url = "https://oauth2.googleapis.com/token"
+    data = {
+        "code": code,
+        "client_id": settings.google_client_id,
+        "client_secret": settings.google_client_secret,
+        "redirect_uri": redirect_uri or settings.google_redirect_uri,
+        "grant_type": "authorization_code",
+    }
+    async with httpx.AsyncClient() as client:
+        response = await client.post(token_url, data=data)
+        return response.json()
+```
+
+### Prevencao
+- Testar fluxos OAuth end-to-end, não apenas endpoints isolados
+- Verificar formato esperado por bibliotecas OAuth
+- Considerar implementação manual para maior controle
+
+---
+
+## 2026-01-26 - Pydantic Literal Validation 422
+
+### Problema
+Chrome extension recebia "Erro ao criar checkout: [object Object]" - API retornava 422
+
+### Causa Raiz
+`CreateCheckoutRequest` tinha `plan: Literal["professional", "enterprise"]` mas a extensão enviava "starter" ou "pro".
+
+### Solucao
+Expandir o Literal para incluir todos os valores válidos:
+```python
+plan: Literal["starter", "pro", "professional", "enterprise"]
+```
+
+### Prevencao
+- Manter sincronização entre frontend (extensão) e backend (API)
+- Documentar valores aceitos em cada campo
+- Usar testes de contrato entre serviços

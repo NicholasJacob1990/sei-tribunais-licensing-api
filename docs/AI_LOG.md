@@ -1,5 +1,36 @@
 # AI Log - SEI Tribunais Licensing API
 
+## 2026-01-26 - Fix: OAuth e Checkout Validation
+
+### Problemas Resolvidos
+1. OAuth Google não funcionava (erro oauth_error)
+2. Checkout retornava 422 Unprocessable Content
+
+### Causa Raiz - OAuth
+1. SessionMiddleware não estava configurado
+2. Estado OAuth armazenado em formato incorreto (authlib esperava dict, recebeu string)
+3. authlib `authorize_access_token()` falhava silenciosamente
+
+### Solucao - OAuth
+- Adicionar SessionMiddleware ao app (ANTES do CORSMiddleware)
+- Implementar troca de token OAuth manualmente com httpx
+- Armazenar estado OAuth na sessão: `request.session["_state_google_"] = state`
+
+### Causa Raiz - Checkout
+- `CreateCheckoutRequest` aceitava apenas "professional" e "enterprise"
+- Extensão Chrome enviava "starter" e "pro"
+
+### Solucao - Checkout
+- Atualizar Literal para: `["starter", "pro", "professional", "enterprise"]`
+
+### Arquivos Alterados
+- `app/main.py` - SessionMiddleware
+- `app/api/endpoints/auth.py` - OAuth flow manual
+- `app/auth/google.py` - Funções `exchange_code_for_token()` e `get_google_user_info()`
+- `app/api/endpoints/checkout.py` - Plan IDs expandidos
+
+---
+
 ## 2026-01-26 - Fix: Conexao DB e Compatibilidade Python 3.13
 
 ### Problema
