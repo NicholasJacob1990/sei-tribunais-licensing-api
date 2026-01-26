@@ -159,13 +159,17 @@ async def websocket_mcp_endpoint(
                     })
 
             elif msg_type == "response":
-                # Resposta a um comando
+                # Resposta a um comando - rotear para o MCP Server
                 cmd_id = data.get("id")
                 success = data.get("success", False)
                 logger.debug(f"[MCP-WS] Resposta de {session_id} para {cmd_id}: success={success}")
 
-                # Aqui você pode implementar lógica para rotear a resposta
-                # de volta para o cliente MCP que enviou o comando
+                # Rotear resposta para o MCP Server
+                try:
+                    from app.api.endpoints.mcp_server import receive_response
+                    receive_response(cmd_id, data)
+                except ImportError:
+                    logger.warning("[MCP-WS] mcp_server não disponível para rotear resposta")
 
             elif msg_type == "register":
                 # Registro da extensão com informações adicionais
