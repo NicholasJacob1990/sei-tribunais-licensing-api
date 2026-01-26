@@ -102,6 +102,16 @@ def load_routers():
         return
 
     try:
+        logger.info("Loading oauth_mcp_router...")
+        from app.api.endpoints.oauth_mcp import router as oauth_mcp_router
+        app.include_router(oauth_mcp_router)  # No prefix - OAuth endpoints at root
+        logger.info("oauth_mcp_router loaded")
+    except Exception as e:
+        err = f"oauth_mcp_router: {e}"
+        _router_errors.append(err)
+        logger.error(f"oauth_mcp_router error: {e}\n{traceback.format_exc()}")
+
+    try:
         logger.info("Loading auth_router...")
         from app.api.endpoints.auth import router as auth_router
         app.include_router(auth_router, prefix="/api/v1")
