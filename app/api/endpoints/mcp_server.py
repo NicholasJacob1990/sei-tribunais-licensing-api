@@ -570,6 +570,26 @@ async def handle_call_tool(params: dict) -> dict:
             }
 
     except asyncio.TimeoutError:
+        # Fallback para Playwright quando extensão não responde
+        if PLAYWRIGHT_AVAILABLE and playwright_manager:
+            logger.warning(f"[MCP] Extension timeout for {tool_name}, falling back to Playwright")
+            try:
+                pw_result = await handle_playwright_tool(tool_name, tool_args, session_id)
+                # Adicionar aviso de que usou fallback
+                if isinstance(pw_result.get("content"), list) and pw_result["content"]:
+                    first_content = pw_result["content"][0]
+                    if first_content.get("type") == "text":
+                        try:
+                            data = json.loads(first_content["text"])
+                            data["_fallback"] = "playwright"
+                            data["_reason"] = "extension_timeout"
+                            first_content["text"] = json.dumps(data, indent=2, ensure_ascii=False)
+                        except:
+                            pass
+                return pw_result
+            except Exception as pw_error:
+                logger.error(f"[MCP] Playwright fallback also failed: {pw_error}")
+
         return {
             "content": [{
                 "type": "text",
@@ -577,18 +597,28 @@ async def handle_call_tool(params: dict) -> dict:
                     "error": "Timeout",
                     "message": f"A extensão não respondeu em {timeout_sec}s para {tool_name}",
                     "session": target_session,
+                    "playwright_available": PLAYWRIGHT_AVAILABLE,
                     "tip": "Aumente timeout_ms ou verifique se a extensão está respondendo"
                 }, indent=2, ensure_ascii=False)
             }],
             "isError": True
         }
     except Exception as e:
+        # Fallback para Playwright em caso de erro
+        if PLAYWRIGHT_AVAILABLE and playwright_manager:
+            logger.warning(f"[MCP] Extension error for {tool_name}: {e}, falling back to Playwright")
+            try:
+                return await handle_playwright_tool(tool_name, tool_args, session_id)
+            except Exception as pw_error:
+                logger.error(f"[MCP] Playwright fallback also failed: {pw_error}")
+
         logger.error(f"[MCP] Error calling tool {tool_name}: {e}")
         return {
             "content": [{
                 "type": "text",
                 "text": json.dumps({
-                    "error": str(e)
+                    "error": str(e),
+                    "playwright_available": PLAYWRIGHT_AVAILABLE
                 }, indent=2)
             }],
             "isError": True
