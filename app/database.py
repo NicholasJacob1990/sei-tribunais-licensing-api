@@ -145,6 +145,23 @@ async def _run_migrations(conn) -> None:
             "ALTER TABLE users ALTER COLUMN google_id DROP NOT NULL"
         ))
 
+    # Migration 003: Add API token fields
+    result = await conn.execute(text("""
+        SELECT column_name FROM information_schema.columns
+        WHERE table_name = 'users' AND column_name = 'api_token_hash'
+    """))
+    if not result.fetchone():
+        logger.info("Adding api_token_hash column...")
+        await conn.execute(text(
+            "ALTER TABLE users ADD COLUMN api_token_hash VARCHAR(255)"
+        ))
+        await conn.execute(text(
+            "ALTER TABLE users ADD COLUMN api_token_created_at TIMESTAMP WITH TIME ZONE"
+        ))
+        await conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS idx_users_api_token_hash ON users(api_token_hash)"
+        ))
+
 
 async def close_db() -> None:
     """Close database connections."""
