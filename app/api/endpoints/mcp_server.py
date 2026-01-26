@@ -224,12 +224,14 @@ MCP_TOOLS = [
 # ============================================
 
 async def handle_initialize(params: dict) -> dict:
-    """Handle MCP initialize request."""
+    """Handle MCP initialize request - supports 2024-11-05 and 2025-06-18."""
     # Aceitar a versão do protocolo do cliente (2024-11-05 ou 2025-06-18)
     client_version = params.get("protocolVersion", "2024-11-05")
-    # Suportar versões conhecidas
+    # Suportar versões conhecidas - v2 deploy fix
     supported_versions = ["2024-11-05", "2025-06-18"]
-    protocol_version = client_version if client_version in supported_versions else "2024-11-05"
+    protocol_version = client_version if client_version in supported_versions else "2025-06-18"
+
+    logger.info(f"[MCP] Initialize: client={client_version}, responding={protocol_version}")
 
     return {
         "protocolVersion": protocol_version,
