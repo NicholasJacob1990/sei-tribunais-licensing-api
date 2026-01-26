@@ -6,7 +6,7 @@ custom connectors as per MCP specification.
 """
 import secrets
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 from urllib.parse import urlencode
 
@@ -94,10 +94,10 @@ async def oauth_authorize(
         "state": state,
         "code_challenge": code_challenge,
         "code_challenge_method": code_challenge_method,
-        "created_at": datetime.utcnow(),
+        "created_at": datetime.now(timezone.utc),
     }
 
-    # Return login form
+    # Return login form with token option
     html = f"""
     <!DOCTYPE html>
     <html>
@@ -110,28 +110,73 @@ async def oauth_authorize(
                    min-height: 100vh; display: flex; align-items: center; justify-content: center; margin: 0; }}
             .container {{ background: white; padding: 2rem; border-radius: 12px; box-shadow: 0 10px 40px rgba(0,0,0,0.2);
                          max-width: 400px; width: 90%; }}
-            h1 {{ color: #333; margin-bottom: 0.5rem; font-size: 1.5rem; }}
-            p {{ color: #666; margin-bottom: 1.5rem; font-size: 0.9rem; }}
+            h1 {{ color: #333; margin-bottom: 0.5rem; font-size: 1.5rem; text-align: center; }}
+            p {{ color: #666; margin-bottom: 1.5rem; font-size: 0.9rem; text-align: center; }}
             input {{ width: 100%; padding: 12px; margin-bottom: 1rem; border: 1px solid #ddd; border-radius: 8px;
                     font-size: 1rem; box-sizing: border-box; }}
             input:focus {{ outline: none; border-color: #667eea; }}
             button {{ width: 100%; padding: 12px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-                     color: white; border: none; border-radius: 8px; font-size: 1rem; cursor: pointer; }}
+                     color: white; border: none; border-radius: 8px; font-size: 1rem; cursor: pointer; margin-bottom: 0.5rem; }}
             button:hover {{ opacity: 0.9; }}
-            .error {{ color: #e74c3c; margin-bottom: 1rem; font-size: 0.9rem; }}
+            .btn-token {{ background: linear-gradient(135deg, #00b894 0%, #00cec9 100%); }}
+            .divider {{ text-align: center; margin: 1.5rem 0; color: #999; position: relative; }}
+            .divider::before, .divider::after {{ content: ''; position: absolute; top: 50%; width: 40%; height: 1px; background: #ddd; }}
+            .divider::before {{ left: 0; }}
+            .divider::after {{ right: 0; }}
+            .tabs {{ display: flex; margin-bottom: 1.5rem; border-bottom: 2px solid #eee; }}
+            .tab {{ flex: 1; padding: 10px; text-align: center; cursor: pointer; color: #666; border-bottom: 2px solid transparent; margin-bottom: -2px; }}
+            .tab.active {{ color: #667eea; border-bottom-color: #667eea; }}
+            .tab-content {{ display: none; }}
+            .tab-content.active {{ display: block; }}
+            .error {{ color: #e74c3c; margin-bottom: 1rem; font-size: 0.9rem; text-align: center; }}
+            .info {{ background: #e8f4fd; border: 1px solid #b8daff; border-radius: 8px; padding: 12px; margin-bottom: 1rem; font-size: 0.85rem; color: #004085; }}
+            .register-link {{ text-align: center; margin-top: 1rem; font-size: 0.9rem; color: #666; }}
+            .register-link a {{ color: #667eea; text-decoration: none; }}
         </style>
     </head>
     <body>
         <div class="container">
             <h1>Autorizar SEI MCP</h1>
-            <p>Faca login para conectar ao Claude Desktop</p>
-            <form method="POST" action="/oauth/authorize/submit">
-                <input type="hidden" name="auth_state" value="{auth_state}">
-                <input type="email" name="email" placeholder="Email" required>
-                <input type="password" name="password" placeholder="Senha" required>
-                <button type="submit">Autorizar</button>
-            </form>
+            <p>Conectar ao Claude Desktop</p>
+
+            <div class="tabs">
+                <div class="tab active" onclick="showTab('login')">Email/Senha</div>
+                <div class="tab" onclick="showTab('token')">API Token</div>
+            </div>
+
+            <div id="login-tab" class="tab-content active">
+                <form method="POST" action="/oauth/authorize/submit">
+                    <input type="hidden" name="auth_state" value="{auth_state}">
+                    <input type="hidden" name="auth_method" value="password">
+                    <input type="email" name="email" placeholder="Email" required>
+                    <input type="password" name="password" placeholder="Senha" required>
+                    <button type="submit">Autorizar</button>
+                </form>
+                <div class="register-link">
+                    Nao tem conta? <a href="/" target="_blank">Criar conta</a>
+                </div>
+            </div>
+
+            <div id="token-tab" class="tab-content">
+                <div class="info">
+                    Cole seu API Token gerado em <a href="/" target="_blank">sei-tribunais-licensing-api.onrender.com</a>
+                </div>
+                <form method="POST" action="/oauth/authorize/token">
+                    <input type="hidden" name="auth_state" value="{auth_state}">
+                    <input type="text" name="api_token" placeholder="sei_xxxxxxxx..." required>
+                    <button type="submit" class="btn-token">Autorizar com Token</button>
+                </form>
+            </div>
         </div>
+
+        <script>
+            function showTab(tab) {{
+                document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+                document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+                document.querySelector('.tab:nth-child(' + (tab === 'login' ? '1' : '2') + ')').classList.add('active');
+                document.getElementById(tab + '-tab').classList.add('active');
+            }}
+        </script>
     </body>
     </html>
     """
@@ -157,7 +202,7 @@ async def oauth_authorize_submit(
     state_data = _oauth_states.pop(auth_state)
 
     # Check if state is expired (10 minutes)
-    if datetime.utcnow() - state_data["created_at"] > timedelta(minutes=10):
+    if datetime.now(timezone.utc) - state_data["created_at"] > timedelta(minutes=10):
         raise HTTPException(400, "Authorization state expired")
 
     # Authenticate user
@@ -189,7 +234,78 @@ async def oauth_authorize_submit(
         "scope": state_data["scope"],
         "code_challenge": state_data["code_challenge"],
         "code_challenge_method": state_data["code_challenge_method"],
-        "created_at": datetime.utcnow(),
+        "created_at": datetime.now(timezone.utc),
+    }
+
+    # Build redirect URL
+    params = {"code": auth_code}
+    if state_data["state"]:
+        params["state"] = state_data["state"]
+
+    redirect_url = f"{state_data['redirect_uri']}?{urlencode(params)}"
+    return RedirectResponse(url=redirect_url, status_code=302)
+
+
+@router.post("/oauth/authorize/token")
+async def oauth_authorize_token(
+    auth_state: str = Form(...),
+    api_token: str = Form(...),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Handle OAuth authorization via API token.
+    """
+    from hashlib import sha256
+
+    # Verify state
+    if auth_state not in _oauth_states:
+        return HTMLResponse(content="""
+            <html><body>
+            <script>alert('Sessao expirada. Tente novamente.'); window.close();</script>
+            </body></html>
+        """)
+
+    state_data = _oauth_states.pop(auth_state)
+
+    # Check if state is expired (10 minutes)
+    if datetime.now(timezone.utc) - state_data["created_at"] > timedelta(minutes=10):
+        return HTMLResponse(content="""
+            <html><body>
+            <script>alert('Sessao expirada. Tente novamente.'); window.close();</script>
+            </body></html>
+        """)
+
+    # Validate API token format
+    if not api_token.startswith("sei_"):
+        return HTMLResponse(content="""
+            <html><body>
+            <script>alert('Token invalido. O token deve comecar com sei_'); history.back();</script>
+            </body></html>
+        """)
+
+    # Hash token and find user
+    token_hash = sha256(api_token.encode()).hexdigest()
+    result = await db.execute(select(User).where(User.api_token_hash == token_hash))
+    user = result.scalar_one_or_none()
+
+    if not user:
+        return HTMLResponse(content="""
+            <html><body>
+            <script>alert('Token invalido ou expirado'); history.back();</script>
+            </body></html>
+        """)
+
+    # Generate authorization code
+    auth_code = secrets.token_urlsafe(32)
+    _oauth_codes[auth_code] = {
+        "user_id": user.id,
+        "user_email": user.email,
+        "client_id": state_data["client_id"],
+        "redirect_uri": state_data["redirect_uri"],
+        "scope": state_data["scope"],
+        "code_challenge": state_data["code_challenge"],
+        "code_challenge_method": state_data["code_challenge_method"],
+        "created_at": datetime.now(timezone.utc),
     }
 
     # Build redirect URL
@@ -228,7 +344,7 @@ async def oauth_token(
         code_data = _oauth_codes.pop(code)
 
         # Check if code is expired (5 minutes)
-        if datetime.utcnow() - code_data["created_at"] > timedelta(minutes=5):
+        if datetime.now(timezone.utc) - code_data["created_at"] > timedelta(minutes=5):
             raise HTTPException(400, {"error": "invalid_grant", "error_description": "Code expired"})
 
         # Verify PKCE if used
