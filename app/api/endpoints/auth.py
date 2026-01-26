@@ -618,3 +618,128 @@ async def logout(
     await db.commit()
 
     return {"message": "Logged out successfully"}
+
+
+# ============================================================================
+# API Token Management (for MCP clients)
+# ============================================================================
+
+
+class ApiTokenResponse(BaseModel):
+    """Response containing API token."""
+    api_token: str
+    created_at: datetime
+    message: str
+
+
+class ValidateTokenRequest(BaseModel):
+    """Request to validate an API token."""
+    token: str
+
+
+class ValidateTokenResponse(BaseModel):
+    """Response from token validation."""
+    valid: bool
+    user_id: str | None = None
+    email: str | None = None
+    reason: str | None = None
+
+
+@router.post("/api-token/generate", response_model=ApiTokenResponse)
+async def generate_api_token(
+    current_user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> ApiTokenResponse:
+    """
+    Generate a new API token for MCP clients.
+
+    This token is long-lived and can be used with Bearer auth.
+    Generating a new token invalidates the previous one.
+
+    Args:
+        current_user: The authenticated user (injected)
+        db: Database session
+
+    Returns:
+        The new API token (shown only once)
+    """
+    import secrets
+
+    # Generate a secure random token
+    api_token = f"sei_{secrets.token_hex(32)}"
+
+    # Store hash of the token
+    current_user.api_token_hash = sha256(api_token.encode()).hexdigest()
+    current_user.api_token_created_at = datetime.utcnow()
+    await db.commit()
+
+    return ApiTokenResponse(
+        api_token=api_token,
+        created_at=current_user.api_token_created_at,
+        message="Token gerado com sucesso. Guarde-o em local seguro - ele não será mostrado novamente.",
+    )
+
+
+@router.post("/api-token/revoke")
+async def revoke_api_token(
+    current_user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """
+    Revoke the current API token.
+
+    Args:
+        current_user: The authenticated user (injected)
+        db: Database session
+
+    Returns:
+        Success message
+    """
+    current_user.api_token_hash = None
+    current_user.api_token_created_at = None
+    await db.commit()
+
+    return {"message": "API token revogado com sucesso"}
+
+
+@router.post("/api-token/validate", response_model=ValidateTokenResponse)
+async def validate_api_token(
+    request: ValidateTokenRequest,
+    db: AsyncSession = Depends(get_db),
+) -> ValidateTokenResponse:
+    """
+    Validate an API token.
+
+    This endpoint can be called by external services (like sei-mcp)
+    to verify a Bearer token and get user info.
+
+    Args:
+        request: Token to validate
+        db: Database session
+
+    Returns:
+        Validation result with user info if valid
+    """
+    if not request.token:
+        return ValidateTokenResponse(valid=False, reason="Token vazio")
+
+    # Hash the provided token
+    token_hash = sha256(request.token.encode()).hexdigest()
+
+    # Find user by token hash
+    result = await db.execute(
+        select(User).where(User.api_token_hash == token_hash)
+    )
+    user = result.scalar_one_or_none()
+
+    if not user:
+        return ValidateTokenResponse(valid=False, reason="Token invalido")
+
+    if not user.is_active:
+        return ValidateTokenResponse(valid=False, reason="Conta desativada")
+
+    return ValidateTokenResponse(
+        valid=True,
+        user_id=user.id,
+        email=user.email,
+    )

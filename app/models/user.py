@@ -69,6 +69,17 @@ class User(Base):
         nullable=True,
     )
 
+    # API token for MCP clients (long-lived Bearer token)
+    api_token_hash: Mapped[str | None] = mapped_column(
+        String(255),
+        nullable=True,
+        index=True,
+    )
+    api_token_created_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
