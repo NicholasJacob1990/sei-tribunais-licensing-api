@@ -132,40 +132,47 @@ async def register_test(
     request: RegisterRequest,
     db: AsyncSession = Depends(get_db),
 ):
-    """Simple test endpoint that mimics register."""
-    # Check if user exists
+    """Simple test endpoint - step by step."""
+    steps = []
+
+    # Step 1: Query
+    steps.append("querying")
     result = await db.execute(
         select(User).where(User.email == request.email)
     )
     existing_user = result.scalar_one_or_none()
+    steps.append("query_done")
 
     if existing_user:
-        return {"status": "EXISTS", "email": request.email}
+        return {"status": "EXISTS", "email": request.email, "steps": steps}
 
-    # Create user (same as register)
+    # Step 2: Hash password (CPU-intensive, might block)
+    steps.append("hashing")
+    pw_hash = hash_password(request.password)
+    steps.append("hash_done")
+
+    # Step 3: Create User object
+    steps.append("creating_user")
     user = User(
         email=request.email,
         name=request.name or request.email.split("@")[0],
-        password_hash=hash_password(request.password),
+        password_hash=pw_hash,
         last_login_at=datetime.utcnow(),
     )
+    steps.append("user_created")
+
+    # Step 4: Add and flush
+    steps.append("adding")
     db.add(user)
+    steps.append("flushing")
     await db.flush()
-
-    # Create tokens
-    access_token = create_access_token({"sub": user.id, "email": user.email})
-    refresh_token = create_refresh_token({"sub": user.id})
-
-    # Store refresh token hash
-    user.refresh_token_hash = sha256(refresh_token.encode()).hexdigest()
-
-    # Note: db.commit() will be called by get_db after we return
+    steps.append("flush_done")
 
     return {
         "status": "CREATED",
         "email": request.email,
         "user_id": str(user.id),
-        "access_token": access_token[:20] + "...",
+        "steps": steps,
     }
 
 
