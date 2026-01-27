@@ -3,12 +3,23 @@ Playwright Automation Service
 
 Automação do SEI via Playwright puro (sem extensão Chrome).
 Usado como fallback quando extensão não está conectada.
+
+Best practices aplicadas (pesquisa 2026-01-27):
+- waitUntil: 'domcontentloaded' em vez de 'networkidle' (desencorajado pelo Playwright)
+- frameLocator() para iframes (auto-waiting) em vez de frame()
+- getByRole()/getByText() quando possível (resilientes a mudanças de DOM)
+- ARIA snapshots com scope por iframe (tree/view/main/full)
+- Cache em memória com TTL para reduzir navegações redundantes
+
+Refs: microsoft/playwright-mcp, browser-use/browser-use, browserbase/stagehand
 """
 
 import asyncio
 import base64
 import logging
 import os
+import re
+import time
 from datetime import datetime
 from typing import Dict, Optional, Any
 from dataclasses import dataclass, field
@@ -18,13 +29,21 @@ logger = logging.getLogger(__name__)
 # Lazy import para não falhar se playwright não estiver instalado
 playwright_available = False
 try:
-    from playwright.async_api import async_playwright, Browser, Page, BrowserContext
+    from playwright.async_api import async_playwright, Browser, Page, BrowserContext, Frame
     playwright_available = True
 except ImportError:
     logger.warning("Playwright not installed. Browser automation disabled.")
     Browser = None
     Page = None
     BrowserContext = None
+    Frame = None
+
+
+@dataclass
+class CacheEntry:
+    """Entrada de cache com TTL."""
+    data: Any
+    expires: float
 
 
 @dataclass
@@ -39,6 +58,8 @@ class PlaywrightSession:
     last_activity: datetime = field(default_factory=datetime.utcnow)
     logged_in: bool = False
     user: Optional[str] = None
+    current_process_number: Optional[str] = None
+    cache: Dict[str, CacheEntry] = field(default_factory=dict)
 
 
 class PlaywrightManager:
@@ -139,6 +160,200 @@ class PlaywrightManager:
         ]
 
     # ============================================
+    # Cache helpers
+    # ============================================
+
+    def _get_cached(self, session: PlaywrightSession, key: str) -> Optional[Any]:
+        """Retorna dados do cache se não expirados."""
+        entry = session.cache.get(key)
+        if entry and entry.expires > time.time():
+            return entry.data
+        if entry:
+            del session.cache[key]
+        return None
+
+    def _set_cache(self, session: PlaywrightSession, key: str, data: Any, ttl_s: float = 60.0):
+        """Armazena dados no cache com TTL."""
+        session.cache[key] = CacheEntry(data=data, expires=time.time() + ttl_s)
+
+    def _invalidate_cache(self, session: PlaywrightSession, prefix: str = ""):
+        """Invalida entradas de cache (todas ou por prefixo)."""
+        if not prefix:
+            session.cache.clear()
+        else:
+            keys_to_del = [k for k in session.cache if k.startswith(prefix)]
+            for k in keys_to_del:
+                del session.cache[k]
+
+    async def _ensure_process_open(self, session: PlaywrightSession, process_number: str) -> dict:
+        """Abre processo somente se não for o processo atual (evita navegação redundante)."""
+        if session.current_process_number == process_number:
+            return {"success": True, "message": f"Processo {process_number} já aberto (skip)"}
+        result = await self.open_process(session.id, process_number)
+        if result.get("success"):
+            session.current_process_number = process_number
+        return result
+
+    # ============================================
+    # Snapshot helpers (ARIA tree)
+    # ============================================
+
+    @staticmethod
+    def _clean_snapshot(snap: str) -> str:
+        """Remove redundâncias do snapshot ARIA (menu lateral, ícones decorativos, etc.)."""
+        # Remover linhas de "Menu cópia protocolo" repetidas
+        snap = re.sub(r'^\s*- link "Menu cópia protocolo".*$\n?', '', snap, flags=re.MULTILINE)
+        # Resumir assinaturas longas
+        snap = re.sub(
+            r'link "Assinado por: (.+?)"',
+            lambda m: f'link "Assinado: {m.group(1).split(chr(10))[0]}"',
+            snap
+        )
+        # Remover imgs decorativas sem texto
+        snap = re.sub(r'^\s*- img \[ref=\w+\]( \[cursor=pointer\])?\s*$\n?', '', snap, flags=re.MULTILINE)
+        return snap
+
+    @staticmethod
+    def _truncate_snapshot(snap: str, max_length: int) -> str:
+        """Trunca snapshot no último newline antes do limite."""
+        if len(snap) <= max_length:
+            return snap
+        truncated = snap[:max_length]
+        last_nl = truncated.rfind('\n')
+        if last_nl > 0:
+            truncated = truncated[:last_nl]
+        return truncated + f'\n... [truncado em {max_length} chars]'
+
+    async def snapshot(self, session_id: str, scope: str = "full",
+                       max_length: int = 50000, include_hidden: bool = False) -> dict:
+        """Captura ARIA snapshot da página (ou de um iframe específico).
+
+        scope: 'full' | 'tree' (ifrArvore) | 'view' (ifrVisualizacao) | 'main' (sem iframes)
+        """
+        if session_id not in self.sessions:
+            return {"success": False, "error": "Sessão não encontrada"}
+
+        session = self.sessions[session_id]
+        page = session.page
+
+        try:
+            target = page
+            scope_label = "full"
+
+            if scope == "tree":
+                frame = page.frame(name="ifrArvore")
+                if frame:
+                    target = frame
+                    scope_label = "ifrArvore"
+                else:
+                    return {"success": False, "error": "iframe ifrArvore não encontrado"}
+            elif scope == "view":
+                frame = page.frame(name="ifrVisualizacao")
+                if frame:
+                    target = frame
+                    scope_label = "ifrVisualizacao"
+                else:
+                    return {"success": False, "error": "iframe ifrVisualizacao não encontrado"}
+            elif scope == "main":
+                scope_label = "main (sem iframes)"
+
+            # Capturar ARIA snapshot
+            snap_data = await target.accessibility.snapshot(interesting_only=not include_hidden)
+
+            if not snap_data:
+                return {"success": True, "snapshot": "(vazio)", "scope": scope_label}
+
+            # Converter para YAML-style string (formato usado pelo playwright-mcp)
+            snap_str = self._serialize_aria_tree(snap_data)
+
+            # Limpar e truncar
+            snap_str = self._clean_snapshot(snap_str)
+            snap_str = self._truncate_snapshot(snap_str, max_length)
+
+            return {
+                "success": True,
+                "snapshot": snap_str,
+                "scope": scope_label,
+                "length": len(snap_str)
+            }
+
+        except Exception as e:
+            logger.error(f"Snapshot error: {e}")
+            return {"success": False, "error": str(e)}
+
+    @staticmethod
+    def _serialize_aria_tree(node: dict, indent: int = 0) -> str:
+        """Serializa nó da árvore de acessibilidade em formato YAML-style legível."""
+        lines = []
+        prefix = "  " * indent
+        role = node.get("role", "")
+        name = node.get("name", "")
+
+        # Formatar nó
+        if name:
+            lines.append(f'{prefix}- {role} "{name}"')
+        elif role:
+            lines.append(f'{prefix}- {role}')
+
+        # Propriedades relevantes
+        if node.get("value"):
+            lines.append(f'{prefix}  value: "{node["value"]}"')
+
+        # Filhos
+        for child in node.get("children", []):
+            lines.append(PlaywrightManager._serialize_aria_tree(child, indent + 1))
+
+        return "\n".join(lines)
+
+    # ============================================
+    # Tool composta: search_and_open
+    # ============================================
+
+    async def search_and_open(self, session_id: str, query: str,
+                               search_type: str = "numero",
+                               include_documents: bool = True) -> dict:
+        """Busca + abre + lista documentos em uma única chamada."""
+        if session_id not in self.sessions:
+            return {"success": False, "error": "Sessão não encontrada. Faça login primeiro."}
+
+        # 1. Buscar
+        search_result = await self.search_process(session_id, query, search_type)
+        if not search_result.get("success"):
+            return search_result
+
+        results = search_result.get("results", [])
+        if not results:
+            return {"success": False, "found": False, "query": query}
+
+        # 2. Abrir o primeiro resultado
+        # Tentar extrair número do processo do texto
+        first_result = results[0].get("text", query)
+        open_result = await self.open_process(session_id, query)
+        if not open_result.get("success"):
+            return open_result
+
+        # Atualizar estado
+        session = self.sessions[session_id]
+        session.current_process_number = query
+
+        # 3. Listar documentos se solicitado
+        documents = []
+        if include_documents:
+            doc_result = await self.list_documents(session_id)
+            if doc_result.get("success"):
+                documents = doc_result.get("documents", [])
+
+        return {
+            "success": True,
+            "found": True,
+            "query": query,
+            "search_results_count": len(results),
+            "process": first_result,
+            "documents": documents,
+            "documents_count": len(documents)
+        }
+
+    # ============================================
     # Ações do SEI
     # ============================================
 
@@ -165,8 +380,8 @@ class PlaywrightManager:
             # Clicar em login
             await page.click('button[type="submit"], input[type="submit"], #sbmLogin')
 
-            # Aguardar navegação
-            await page.wait_for_load_state('networkidle', timeout=10000)
+            # Aguardar navegação (domcontentloaded é mais rápido e confiável que networkidle)
+            await page.wait_for_load_state('domcontentloaded', timeout=10000)
 
             # Verificar se login foi bem sucedido
             current_url = page.url
@@ -189,17 +404,23 @@ class PlaywrightManager:
         session = self.sessions[session_id]
         page = session.page
 
+        # Cache check
+        cache_key = f"search:{search_type}:{query}"
+        cached = self._get_cached(session, cache_key)
+        if cached is not None:
+            return cached
+
         try:
             # Navegar para pesquisa
             await page.click('a:has-text("Pesquisa"), #lnkPesquisar')
-            await page.wait_for_load_state('networkidle')
+            await page.wait_for_load_state('domcontentloaded')
 
             # Preencher busca
             search_input = await page.query_selector('input[name="txtPesquisa"], #txtPesquisaRapida')
             if search_input:
                 await search_input.fill(query)
                 await page.keyboard.press('Enter')
-                await page.wait_for_load_state('networkidle')
+                await page.wait_for_load_state('domcontentloaded')
 
             # Coletar resultados
             results = await page.query_selector_all('tr.processoVisitado, tr.processoNaoVisitado, .processo')
@@ -209,7 +430,9 @@ class PlaywrightManager:
                 text = await result.inner_text()
                 processes.append({"text": text.strip()})
 
-            return {"success": True, "results": processes, "count": len(processes)}
+            result = {"success": True, "results": processes, "count": len(processes)}
+            self._set_cache(session, cache_key, result, ttl_s=30.0)
+            return result
 
         except Exception as e:
             logger.error(f"Search error: {e}")
@@ -271,7 +494,7 @@ class PlaywrightManager:
             if search_input:
                 await search_input.fill(process_number)
                 await page.keyboard.press('Enter')
-                await page.wait_for_load_state('networkidle')
+                await page.wait_for_load_state('domcontentloaded')
 
                 # Verificar se encontrou
                 current_url = page.url
@@ -282,7 +505,7 @@ class PlaywrightManager:
             process_link = await page.query_selector(f'a:has-text("{process_number}")')
             if process_link:
                 await process_link.click()
-                await page.wait_for_load_state('networkidle')
+                await page.wait_for_load_state('domcontentloaded')
                 return {"success": True, "message": f"Processo {process_number} aberto", "url": page.url}
 
             return {"success": False, "error": f"Processo {process_number} não encontrado"}
@@ -299,10 +522,16 @@ class PlaywrightManager:
         session = self.sessions[session_id]
         page = session.page
 
+        # Cache check
+        cache_key = f"list_docs:{process_number or 'current'}"
+        cached = self._get_cached(session, cache_key)
+        if cached is not None:
+            return cached
+
         try:
-            # Se informou número, abre o processo primeiro
+            # Se informou número, abre somente se necessário (evita navegação redundante)
             if process_number:
-                open_result = await self.open_process(session_id, process_number)
+                open_result = await self._ensure_process_open(session, process_number)
                 if not open_result.get("success"):
                     return open_result
 
@@ -333,7 +562,9 @@ class PlaywrightManager:
                 except:
                     continue
 
-            return {"success": True, "documents": documents, "count": len(documents)}
+            result = {"success": True, "documents": documents, "count": len(documents)}
+            self._set_cache(session, cache_key, result, ttl_s=60.0)
+            return result
 
         except Exception as e:
             logger.error(f"List documents error: {e}")
@@ -347,10 +578,16 @@ class PlaywrightManager:
         session = self.sessions[session_id]
         page = session.page
 
+        # Cache check
+        cache_key = f"status:{process_number or 'current'}:{include_history}"
+        cached = self._get_cached(session, cache_key)
+        if cached is not None:
+            return cached
+
         try:
-            # Abre o processo se informou número
+            # Abre o processo somente se necessário
             if process_number:
-                open_result = await self.open_process(session_id, process_number)
+                open_result = await self._ensure_process_open(session, process_number)
                 if not open_result.get("success"):
                     return open_result
 
@@ -360,7 +597,7 @@ class PlaywrightManager:
             )
             if andamento_link:
                 await andamento_link.click()
-                await page.wait_for_load_state('networkidle')
+                await page.wait_for_load_state('domcontentloaded')
 
             # Coletar histórico
             history = []
@@ -382,13 +619,15 @@ class PlaywrightManager:
             if status_elem:
                 status = await status_elem.inner_text()
 
-            return {
+            result = {
                 "success": True,
                 "process_number": process_number,
                 "status": status.strip() if status else "Status não identificado",
                 "history": history,
                 "history_count": len(history)
             }
+            self._set_cache(session, cache_key, result, ttl_s=30.0)
+            return result
 
         except Exception as e:
             logger.error(f"Get status error: {e}")
@@ -404,9 +643,12 @@ class PlaywrightManager:
         session = self.sessions[session_id]
         page = session.page
 
+        # Invalidar cache (operação de escrita)
+        self._invalidate_cache(session, "list_docs:")
+
         try:
-            # Abre o processo
-            open_result = await self.open_process(session_id, process_number)
+            # Abre o processo somente se necessário
+            open_result = await self._ensure_process_open(session, process_number)
             if not open_result.get("success"):
                 return open_result
 
@@ -418,7 +660,7 @@ class PlaywrightManager:
                 return {"success": False, "error": "Botão 'Incluir Documento' não encontrado"}
 
             await include_doc.click()
-            await page.wait_for_load_state('networkidle')
+            await page.wait_for_load_state('domcontentloaded')
 
             # Selecionar tipo de documento
             type_input = await page.query_selector(
@@ -436,7 +678,7 @@ class PlaywrightManager:
                 else:
                     await page.select_option(type_input, label=document_type)
 
-            await page.wait_for_load_state('networkidle')
+            await page.wait_for_load_state('domcontentloaded')
 
             # Preencher descrição se informada
             if description:
@@ -459,7 +701,7 @@ class PlaywrightManager:
             )
             if save_btn:
                 await save_btn.click()
-                await page.wait_for_load_state('networkidle')
+                await page.wait_for_load_state('domcontentloaded')
 
             # Verificar se criou
             current_url = page.url
@@ -499,7 +741,7 @@ class PlaywrightManager:
                 doc_link = await page.query_selector(f'a[href*="id_documento={document_id}"]')
                 if doc_link:
                     await doc_link.click()
-                    await page.wait_for_load_state('networkidle')
+                    await page.wait_for_load_state('domcontentloaded')
 
             # Clicar em "Assinar"
             sign_btn = await page.query_selector(
@@ -509,7 +751,7 @@ class PlaywrightManager:
                 return {"success": False, "error": "Botão de assinatura não encontrado"}
 
             await sign_btn.click()
-            await page.wait_for_load_state('networkidle')
+            await page.wait_for_load_state('domcontentloaded')
 
             # Preencher senha
             pwd_input = await page.query_selector(
@@ -524,7 +766,7 @@ class PlaywrightManager:
             )
             if confirm_btn:
                 await confirm_btn.click()
-                await page.wait_for_load_state('networkidle')
+                await page.wait_for_load_state('domcontentloaded')
 
             # Verificar sucesso
             success_msg = await page.query_selector('.alert-success, .mensagem-sucesso, :has-text("assinado com sucesso")')
@@ -552,9 +794,12 @@ class PlaywrightManager:
         session = self.sessions[session_id]
         page = session.page
 
+        # Invalidar cache (operação de escrita)
+        self._invalidate_cache(session)
+
         try:
-            # Abre o processo
-            open_result = await self.open_process(session_id, process_number)
+            # Abre o processo somente se necessário
+            open_result = await self._ensure_process_open(session, process_number)
             if not open_result.get("success"):
                 return open_result
 
@@ -566,7 +811,7 @@ class PlaywrightManager:
                 return {"success": False, "error": "Botão 'Enviar Processo' não encontrado"}
 
             await send_btn.click()
-            await page.wait_for_load_state('networkidle')
+            await page.wait_for_load_state('domcontentloaded')
 
             # Selecionar unidade destino
             unit_input = await page.query_selector(
@@ -606,7 +851,7 @@ class PlaywrightManager:
             )
             if submit_btn:
                 await submit_btn.click()
-                await page.wait_for_load_state('networkidle')
+                await page.wait_for_load_state('domcontentloaded')
 
             return {"success": True, "message": f"Processo tramitado para {target_unit}"}
 
@@ -624,7 +869,7 @@ class PlaywrightManager:
 
         try:
             await page.goto(url, wait_until='domcontentloaded')
-            await page.wait_for_load_state('networkidle')
+            await page.wait_for_load_state('domcontentloaded')
 
             return {
                 "success": True,
@@ -644,7 +889,7 @@ class PlaywrightManager:
 
         try:
             await page.click(selector)
-            await page.wait_for_load_state('networkidle')
+            await page.wait_for_load_state('domcontentloaded')
             return {"success": True, "message": f"Clicado em {selector}"}
         except Exception as e:
             return {"success": False, "error": str(e)}
@@ -677,7 +922,7 @@ class PlaywrightManager:
             )
             if logout_btn:
                 await logout_btn.click()
-                await page.wait_for_load_state('networkidle')
+                await page.wait_for_load_state('domcontentloaded')
 
             session.logged_in = False
             session.user = None

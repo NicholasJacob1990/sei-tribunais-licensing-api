@@ -18,6 +18,13 @@ from datetime import datetime
 from typing import Dict, Any, Optional
 from uuid import uuid4
 
+try:
+    import redis.asyncio as aioredis
+    REDIS_AVAILABLE = True
+except ImportError:
+    aioredis = None
+    REDIS_AVAILABLE = False
+
 from fastapi import APIRouter, Request, Response
 from fastapi.responses import StreamingResponse
 from sse_starlette.sse import EventSourceResponse
@@ -42,6 +49,83 @@ logger.info(f"Playwright automation available: {PLAYWRIGHT_AVAILABLE}")
 # Armazena respostas pendentes de comandos
 pending_responses: Dict[str, asyncio.Future] = {}
 
+# ============================================
+# Cache Redis para tools de leitura
+# ============================================
+REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
+_redis_client: Optional[aioredis.Redis] = None
+
+CACHEABLE_TOOLS = {"sei_search_process", "sei_list_documents", "sei_get_status"}
+CACHE_TTL = {"sei_search_process": 30, "sei_list_documents": 60, "sei_get_status": 30}
+CACHE_INVALIDATING_TOOLS = {"sei_create_document", "sei_forward_process", "sei_sign_document"}
+
+
+async def _get_redis():
+    """Lazy-init Redis client."""
+    global _redis_client
+    if not REDIS_AVAILABLE:
+        return None
+    if _redis_client is None:
+        try:
+            _redis_client = aioredis.from_url(REDIS_URL, decode_responses=True)
+            await _redis_client.ping()
+            logger.info("[MCP] Redis cache connected")
+        except Exception as e:
+            logger.warning(f"[MCP] Redis not available, cache disabled: {e}")
+            _redis_client = None
+    return _redis_client
+
+
+async def _get_cached_result(tool_name: str, tool_args: dict) -> Optional[dict]:
+    """Busca resultado em cache Redis."""
+    if tool_name not in CACHEABLE_TOOLS:
+        return None
+    r = await _get_redis()
+    if not r:
+        return None
+    try:
+        cache_key = f"sei:mcp:{tool_name}:{json.dumps(tool_args, sort_keys=True)}"
+        cached = await r.get(cache_key)
+        if cached:
+            logger.debug(f"[MCP] Cache hit: {tool_name}")
+            return json.loads(cached)
+    except Exception as e:
+        logger.debug(f"[MCP] Cache read error: {e}")
+    return None
+
+
+async def _set_cached_result(tool_name: str, tool_args: dict, result: dict):
+    """Armazena resultado em cache Redis."""
+    if tool_name not in CACHEABLE_TOOLS:
+        return
+    r = await _get_redis()
+    if not r:
+        return
+    try:
+        cache_key = f"sei:mcp:{tool_name}:{json.dumps(tool_args, sort_keys=True)}"
+        ttl = CACHE_TTL.get(tool_name, 30)
+        await r.setex(cache_key, ttl, json.dumps(result, ensure_ascii=False))
+        logger.debug(f"[MCP] Cache set: {tool_name} (TTL={ttl}s)")
+    except Exception as e:
+        logger.debug(f"[MCP] Cache write error: {e}")
+
+
+async def _invalidate_cache(tool_name: str):
+    """Invalida cache quando operação de escrita ocorre."""
+    if tool_name not in CACHE_INVALIDATING_TOOLS:
+        return
+    r = await _get_redis()
+    if not r:
+        return
+    try:
+        # Invalidar todas as chaves de tools cacheáveis
+        for pattern in ["sei:mcp:sei_list_documents:*", "sei:mcp:sei_get_status:*", "sei:mcp:sei_search_process:*"]:
+            async for key in r.scan_iter(match=pattern):
+                await r.delete(key)
+        logger.debug(f"[MCP] Cache invalidated by {tool_name}")
+    except Exception as e:
+        logger.debug(f"[MCP] Cache invalidation error: {e}")
+
 # Timeout padrão configurável via env var (em ms)
 DEFAULT_TIMEOUT_MS = int(os.environ.get("SEI_MCP_COMMAND_TIMEOUT_MS", "30000"))
 
@@ -59,6 +143,9 @@ COMMON_FIELDS = {
 
 # Tools que são executadas localmente no servidor (não precisam de extensão)
 LOCAL_TOOLS = ["sei_open_url", "sei_get_connection_status", "sei_wait_for_extension"]
+
+# Tools compostas: orquestradas server-side (múltiplos comandos WebSocket sequenciais)
+COMPOSITE_TOOLS = ["sei_search_and_open"]
 
 # ============================================
 # Definição das Ferramentas MCP
@@ -216,6 +303,31 @@ MCP_TOOLS = [
             "type": "object",
             "properties": {}
         }
+    },
+    {
+        "name": "sei_search_and_open",
+        "description": "Busca, abre e lista documentos de um processo em uma única chamada (combina sei_search_process + sei_open_process + sei_list_documents). Use esta ferramenta PRIMEIRO ao trabalhar com processos — economiza 3 chamadas.",
+        "inputSchema": with_common_fields({
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Número ou texto do processo"},
+                "type": {"type": "string", "enum": ["numero", "texto", "interessado", "assunto"], "default": "numero"},
+                "include_documents": {"type": "boolean", "default": True, "description": "Incluir lista de documentos na resposta"}
+            },
+            "required": ["query"]
+        })
+    },
+    {
+        "name": "sei_snapshot",
+        "description": "Captura ARIA snapshot (árvore de acessibilidade) da página SEI. Muito mais leve que screenshot — retorna texto estruturado. Use scope para limitar: 'tree' (árvore de documentos), 'view' (visualização do documento), 'main' (página sem iframes), 'full' (tudo).",
+        "inputSchema": with_common_fields({
+            "type": "object",
+            "properties": {
+                "scope": {"type": "string", "enum": ["full", "tree", "view", "main"], "default": "full", "description": "Escopo: full=tudo, tree=ifrArvore, view=ifrVisualizacao, main=sem iframes"},
+                "max_length": {"type": "integer", "default": 50000, "description": "Tamanho máximo do snapshot em caracteres"},
+                "include_hidden": {"type": "boolean", "default": False, "description": "Incluir elementos ocultos"}
+            }
+        })
     }
 ]
 
@@ -425,6 +537,22 @@ async def handle_playwright_tool(tool_name: str, tool_args: dict, session_id: st
                     }]
                 }
 
+        elif tool_name == "sei_search_and_open":
+            query = tool_args.get("query", "")
+            search_type = tool_args.get("type", "numero")
+            include_documents = tool_args.get("include_documents", True)
+            result = await playwright_manager.search_and_open(
+                pw_session_id, query, search_type, include_documents
+            )
+
+        elif tool_name == "sei_snapshot":
+            scope = tool_args.get("scope", "full")
+            max_length = tool_args.get("max_length", 50000)
+            include_hidden = tool_args.get("include_hidden", False)
+            result = await playwright_manager.snapshot(
+                pw_session_id, scope, max_length, include_hidden
+            )
+
         elif tool_name == "sei_navigate":
             url = tool_args.get("url", "")
             result = await playwright_manager.navigate(pw_session_id, url)
@@ -484,6 +612,89 @@ async def handle_playwright_tool(tool_name: str, tool_args: dict, session_id: st
         }
 
 
+async def handle_composite_tool(tool_name: str, tool_args: dict,
+                                 session_id: str = None, timeout_sec: float = 30) -> dict:
+    """Orquestra tools compostas server-side (múltiplos comandos sequenciais)."""
+
+    # Determinar backend: extensão ou Playwright
+    use_extension = ws_manager.is_connected()
+    target_session = None
+    if use_extension:
+        target_session = ws_manager.get_session_by_id(session_id) if session_id else ws_manager.get_most_recent_session()
+
+    async def _call(action: str, params: dict) -> dict:
+        """Executa sub-comando via extensão ou Playwright."""
+        if use_extension and target_session:
+            try:
+                return await send_command_and_wait(action, params, target_session, timeout_sec)
+            except asyncio.TimeoutError:
+                pass
+        # Fallback para Playwright
+        if PLAYWRIGHT_AVAILABLE and playwright_manager:
+            pw_result = await handle_playwright_tool(action, params, session_id)
+            # Extrair data do formato MCP
+            if isinstance(pw_result.get("content"), list) and pw_result["content"]:
+                try:
+                    return json.loads(pw_result["content"][0].get("text", "{}"))
+                except (json.JSONDecodeError, KeyError):
+                    pass
+            return {"success": False, "error": "Formato inesperado do Playwright"}
+        return {"success": False, "error": "Sem backend disponível (extensão ou Playwright)"}
+
+    try:
+        if tool_name == "sei_search_and_open":
+            query = tool_args.get("query", "")
+            search_type = tool_args.get("type", "numero")
+            include_documents = tool_args.get("include_documents", True)
+
+            # 1. Buscar
+            search_result = await _call("sei_search_process", {"query": query, "type": search_type})
+            if not search_result.get("success"):
+                return {
+                    "content": [{"type": "text", "text": json.dumps(
+                        {"found": False, "query": query, "error": search_result.get("error", "Busca falhou")},
+                        indent=2, ensure_ascii=False
+                    )}],
+                    "isError": True
+                }
+
+            results = search_result.get("results", search_result.get("data", {}).get("results", []))
+
+            # 2. Abrir
+            open_result = await _call("sei_open_process", {"process_number": query})
+
+            # 3. Listar documentos
+            documents = []
+            if include_documents and open_result.get("success"):
+                doc_result = await _call("sei_list_documents", {"process_number": query})
+                if doc_result.get("success"):
+                    documents = doc_result.get("documents", doc_result.get("data", {}).get("documents", []))
+
+            return {
+                "content": [{"type": "text", "text": json.dumps({
+                    "found": bool(open_result.get("success")),
+                    "query": query,
+                    "search_results_count": len(results),
+                    "documents": documents,
+                    "documents_count": len(documents)
+                }, indent=2, ensure_ascii=False)}]
+            }
+
+        return {
+            "content": [{"type": "text", "text": json.dumps(
+                {"error": f"Tool composta {tool_name} não implementada"}
+            )}],
+            "isError": True
+        }
+
+    except Exception as e:
+        logger.error(f"[MCP] Composite tool error {tool_name}: {e}")
+        return {
+            "content": [{"type": "text", "text": json.dumps({"error": str(e)})}],
+            "isError": True
+        }
+
+
 async def handle_call_tool(params: dict) -> dict:
     """Handle MCP tools/call request - executa ferramenta via extensão Chrome."""
     tool_name = params.get("name")
@@ -499,6 +710,23 @@ async def handle_call_tool(params: dict) -> dict:
     # Verificar se é tool local (não precisa de extensão)
     if tool_name in LOCAL_TOOLS:
         return await handle_local_tool(tool_name, tool_args)
+
+    # Tools compostas: orquestração server-side (múltiplos WebSocket commands)
+    if tool_name in COMPOSITE_TOOLS:
+        return await handle_composite_tool(tool_name, tool_args, session_id, timeout_sec)
+
+    # Cache Redis: verificar se resultado já está em cache (tools de leitura)
+    cached_result = await _get_cached_result(tool_name, tool_args)
+    if cached_result is not None:
+        return {
+            "content": [{
+                "type": "text",
+                "text": json.dumps({**cached_result, "_cache": "hit"}, indent=2, ensure_ascii=False)
+            }]
+        }
+
+    # Invalidar cache se for operação de escrita
+    await _invalidate_cache(tool_name)
 
     # Verificar se há extensão conectada OU se Playwright está disponível
     if not ws_manager.is_connected():
@@ -559,6 +787,10 @@ async def handle_call_tool(params: dict) -> dict:
                         "mimeType": data.get("mimeType", "image/png")
                     }]
                 }
+
+            # Cache Redis: salvar resultado de tools cacheáveis
+            if isinstance(data, dict):
+                await _set_cached_result(tool_name, tool_args, data)
 
             return {
                 "content": [{
