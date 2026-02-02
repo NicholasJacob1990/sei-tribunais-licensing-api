@@ -14,12 +14,15 @@ from app.models.usage import UsageRecord
 logger = structlog.get_logger()
 
 
-# Plan limits - requisicoes por MES
+# Plan limits - operacoes por DIA
 PLAN_LIMITS = {
-    PlanId.FREE: 50,           # 50 req/mes
-    PlanId.PROFESSIONAL: 500,  # 500 req/mes
-    PlanId.OFFICE: 500,        # 500 req/mes
-    PlanId.ENTERPRISE: -1,     # unlimited
+    PlanId.FREE: 5,            # 5 ops/dia
+    PlanId.STARTER: 20,        # 20 ops/dia
+    PlanId.PRO: -1,            # ilimitado
+    PlanId.ENTERPRISE: -1,     # ilimitado
+    # Legacy (tratados como Starter)
+    PlanId.PROFESSIONAL: 20,
+    PlanId.OFFICE: 20,
 }
 
 

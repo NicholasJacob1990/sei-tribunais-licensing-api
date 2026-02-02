@@ -40,9 +40,10 @@ class PlanId(str, Enum):
     FREE = "free"
     STARTER = "starter"
     PRO = "pro"
-    PROFESSIONAL = "professional"  # Legacy
-    OFFICE = "office"  # Legacy
-    ENTERPRISE = "enterprise"  # Legacy
+    ENTERPRISE = "enterprise"
+    # Legacy (mantidos para compatibilidade com DB existente)
+    PROFESSIONAL = "professional"
+    OFFICE = "office"
 
 
 class License(Base):

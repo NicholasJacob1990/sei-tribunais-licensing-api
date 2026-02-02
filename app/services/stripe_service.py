@@ -1,10 +1,11 @@
 """
 Stripe integration service for payment processing
 
-Planos configurados:
-- FREE: 0 BRL, 50 requisicoes/mes
-- PROFESSIONAL: 29.90 BRL/mes, 500 requisicoes/mes
-- ENTERPRISE: 99.90 BRL/mes, requisicoes ilimitadas
+Planos ativos:
+- FREE: 0 BRL, 5 operacoes/dia
+- STARTER: 29.90 BRL/mes, 20 operacoes/dia
+- PRO: 49.90 BRL/mes, operacoes ilimitadas
+- ENTERPRISE: 99.90 BRL/mes, operacoes ilimitadas + suporte dedicado
 """
 import stripe
 from datetime import datetime
@@ -83,22 +84,19 @@ PLAN_CONFIGS: dict[PlanId, PlanConfig] = {
             "Atualizacoes prioritarias",
         ],
     ),
-    # Legacy plans (mantidos para compatibilidade)
-    PlanId.PROFESSIONAL: PlanConfig(
-        plan_id=PlanId.PROFESSIONAL,
-        name="Professional",
-        price_monthly_cents=2990,
-        price_yearly_cents=29900,
-        requests_per_month=500,
-        features=["500 requisicoes/mes"],
-    ),
     PlanId.ENTERPRISE: PlanConfig(
         plan_id=PlanId.ENTERPRISE,
         name="Enterprise",
-        price_monthly_cents=9990,
-        price_yearly_cents=99900,
-        requests_per_month=-1,
-        features=["Requisicoes ilimitadas"],
+        price_monthly_cents=9990,  # R$ 99,90
+        price_yearly_cents=99900,  # R$ 999,00 (2 meses gratis)
+        requests_per_month=-1,  # Ilimitado
+        features=[
+            "Operacoes ilimitadas",
+            "Suporte dedicado",
+            "SLA garantido",
+            "Onboarding personalizado",
+            "Acesso a todas as funcionalidades",
+        ],
     ),
 }
 
@@ -116,14 +114,10 @@ def _get_price_id(key: str, default: str = "") -> str:
 PRICE_IDS: dict[str, dict[str, str]] = {
     # Produto principal (Iudex API) - LIVE MODE
     "default": {
-        # Novos planos (live mode)
         "starter_monthly": _get_price_id("STARTER_MONTHLY", "price_1SttjdCvEJFyzDT1WMwiMuGp"),
         "starter_yearly": _get_price_id("STARTER_YEARLY", "price_1Sttk0CvEJFyzDT1vGSri3Qo"),
         "pro_monthly": _get_price_id("PRO_MONTHLY", "price_1SttkmCvEJFyzDT1VjDV3prc"),
         "pro_yearly": _get_price_id("PRO_YEARLY", "price_1SttlQCvEJFyzDT14IoZB6cB"),
-        # Legacy (mantidos para compatibilidade - live mode)
-        "professional_monthly": _get_price_id("PROFESSIONAL_MONTHLY", "price_1Stbk5CvEJFyzDT1jUZofSDM"),
-        "professional_yearly": _get_price_id("PROFESSIONAL_YEARLY", "price_1Stbk6CvEJFyzDT1gucqDDtL"),
         "enterprise_monthly": _get_price_id("ENTERPRISE_MONTHLY", "price_1Stbk7CvEJFyzDT1Ol3ucCbI"),
         "enterprise_yearly": _get_price_id("ENTERPRISE_YEARLY", "price_1Stbk8CvEJFyzDT1ZUGDqo8u"),
     },
@@ -132,13 +126,13 @@ PRICE_IDS: dict[str, dict[str, str]] = {
 
 # Limites de requisicoes por plano (usado para validacao)
 PLAN_REQUEST_LIMITS: dict[PlanId, int] = {
-    PlanId.FREE: 5,  # 5 operacoes/dia gratuitas
-    PlanId.STARTER: 20,  # 20 operacoes/dia
-    PlanId.PRO: -1,  # Ilimitado
-    # Legacy
-    PlanId.PROFESSIONAL: 500,
-    PlanId.ENTERPRISE: -1,
-    PlanId.OFFICE: 500,
+    PlanId.FREE: 5,           # 5 operacoes/dia
+    PlanId.STARTER: 20,       # 20 operacoes/dia
+    PlanId.PRO: -1,           # Ilimitado
+    PlanId.ENTERPRISE: -1,    # Ilimitado
+    # Legacy (para usuarios existentes migrando)
+    PlanId.PROFESSIONAL: 20,  # Tratado como Starter
+    PlanId.OFFICE: 20,        # Tratado como Starter
 }
 
 
@@ -154,9 +148,12 @@ class StripeService:
         """Retorna a configuracao de um plano."""
         return PLAN_CONFIGS.get(plan)
 
+    # Planos ativos (exibidos no frontend)
+    ACTIVE_PLANS = {PlanId.FREE, PlanId.STARTER, PlanId.PRO, PlanId.ENTERPRISE}
+
     @staticmethod
     def get_all_plans() -> list[dict]:
-        """Retorna todos os planos disponiveis."""
+        """Retorna todos os planos ativos disponiveis."""
         return [
             {
                 "id": config.plan_id.value,
@@ -168,6 +165,7 @@ class StripeService:
                 "currency": "BRL",
             }
             for config in PLAN_CONFIGS.values()
+            if config.plan_id in StripeService.ACTIVE_PLANS
         ]
 
     @staticmethod

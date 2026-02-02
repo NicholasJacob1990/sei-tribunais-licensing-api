@@ -5,17 +5,23 @@ Permite que extensões Chrome se conectem ao servidor MCP via WebSocket.
 A extensão envia comandos e recebe respostas para automação do SEI/Tribunais.
 
 OTIMIZADO: Retry com backoff, timeout handling, resposta assíncrona
+SEGURANÇA: Requer API token (sei_xxx) via query param ?token=
 """
 
 import asyncio
 import json
 import logging
 from datetime import datetime
+from hashlib import sha256
 from typing import Dict, Optional, Any
 from uuid import uuid4
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Depends, Query
 from fastapi.websockets import WebSocketState
+from sqlalchemy import select
+
+from app.database import async_session_factory
+from app.models.user import User
 
 logger = logging.getLogger(__name__)
 
@@ -152,24 +158,48 @@ class ConnectionManager:
 manager = ConnectionManager()
 
 
+async def _authenticate_ws_token(token: str) -> Optional[User]:
+    """Valida API token (sei_xxx) e retorna o User ou None."""
+    if not token or not token.startswith("sei_"):
+        return None
+    token_hash = sha256(token.encode()).hexdigest()
+    async with async_session_factory() as db:
+        result = await db.execute(
+            select(User).where(User.api_token_hash == token_hash)
+        )
+        user = result.scalar_one_or_none()
+        if user and user.is_active:
+            return user
+    return None
+
+
 @router.websocket("/mcp")
 async def websocket_mcp_endpoint(
     websocket: WebSocket,
+    token: str = Query(default=None),
     session_id: str = Query(default=None),
     version: str = Query(default="1.0.0"),
 ):
     """
     Endpoint WebSocket para conexão da extensão Chrome.
 
-    A extensão se conecta aqui e recebe comandos do servidor MCP.
+    REQUER: ?token=sei_xxx (API token gerado via /auth/api-token/generate)
 
     Protocolo:
-    - Extensão conecta com ?session_id=xxx (opcional, gera automaticamente)
+    - Extensão conecta com ?token=sei_xxx&session_id=xxx
+    - Servidor valida token e aceita ou rejeita conexão
     - Servidor envia: { type: "connected", session_id: "xxx" }
     - Extensão envia: { type: "event", event: "...", data: {...} }
     - Servidor envia comandos: { type: "command", id: "...", action: "...", params: {...} }
     - Extensão responde: { type: "response", id: "...", success: true/false, data/error: {...} }
     """
+    # Autenticação obrigatória
+    user = await _authenticate_ws_token(token)
+    if not user:
+        await websocket.close(code=4001, reason="Authentication required: invalid or missing API token")
+        logger.warning(f"[MCP-WS] Conexão rejeitada: token inválido")
+        return
+
     # Gerar session_id se não fornecido
     if not session_id:
         session_id = f"session_{uuid4().hex[:8]}"
@@ -177,9 +207,12 @@ async def websocket_mcp_endpoint(
     metadata = {
         "version": version,
         "user_agent": websocket.headers.get("user-agent"),
+        "user_email": user.email,
+        "user_id": user.id,
     }
 
     await manager.connect(websocket, session_id, metadata)
+    logger.info(f"[MCP-WS] Autenticado: {user.email} → {session_id}")
 
     # Enviar confirmação de conexão
     await websocket.send_json({
@@ -249,10 +282,10 @@ async def websocket_mcp_endpoint(
 
 @router.get("/mcp/sessions")
 async def list_mcp_sessions():
-    """Lista todas as sessões WebSocket ativas."""
+    """Lista todas as sessões WebSocket ativas (info pública limitada)."""
     return {
-        "sessions": manager.list_sessions(),
         "total": len(manager.active_connections),
+        "has_connections": manager.is_connected(),
     }
 
 
@@ -262,7 +295,6 @@ async def mcp_status():
     return {
         "status": "running",
         "connected_extensions": len(manager.active_connections),
-        "default_session": manager.get_default_session(),
     }
 
 
