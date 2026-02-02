@@ -44,7 +44,16 @@ except ImportError:
     playwright_manager = None
     PLAYWRIGHT_AVAILABLE = False
 
+# Agent fallback (quando Extension + Playwright falham)
+try:
+    from app.services.resilience import create_agent_fallback_response
+    AGENT_FALLBACK_AVAILABLE = os.environ.get("AGENT_FALLBACK_ENABLED", "false").lower() == "true"
+except ImportError:
+    create_agent_fallback_response = None
+    AGENT_FALLBACK_AVAILABLE = False
+
 logger.info(f"Playwright automation available: {PLAYWRIGHT_AVAILABLE}")
+logger.info(f"Agent fallback available: {AGENT_FALLBACK_AVAILABLE}")
 
 # Armazena respostas pendentes de comandos
 pending_responses: Dict[str, asyncio.Future] = {}
@@ -603,6 +612,15 @@ async def handle_playwright_tool(tool_name: str, tool_args: dict, session_id: st
 
     except Exception as e:
         logger.error(f"[MCP] Playwright error for {tool_name}: {e}")
+        # Agent fallback: screenshot + ARIA para Claude analisar
+        if AGENT_FALLBACK_AVAILABLE and create_agent_fallback_response:
+            pw_session_id = session_id or "default"
+            if playwright_manager and pw_session_id in playwright_manager.sessions:
+                try:
+                    page = playwright_manager.sessions[pw_session_id].page
+                    return await create_agent_fallback_response(page, tool_name, tool_args, str(e))
+                except Exception as fb_err:
+                    logger.error(f"[MCP] Agent fallback failed: {fb_err}")
         return {
             "content": [{
                 "type": "text",
@@ -829,6 +847,12 @@ async def handle_call_tool(params: dict) -> dict:
                 return pw_result
             except Exception as pw_error:
                 logger.error(f"[MCP] Playwright fallback also failed: {pw_error}")
+                # Agent fallback: captura screenshot+ARIA para Claude analisar
+                if AGENT_FALLBACK_AVAILABLE and create_agent_fallback_response and playwright_manager:
+                    pw_session_id = session_id or "default"
+                    if pw_session_id in playwright_manager.sessions:
+                        page = playwright_manager.sessions[pw_session_id].page
+                        return await create_agent_fallback_response(page, tool_name, tool_args, str(pw_error))
 
         return {
             "content": [{
@@ -851,6 +875,12 @@ async def handle_call_tool(params: dict) -> dict:
                 return await handle_playwright_tool(tool_name, tool_args, session_id)
             except Exception as pw_error:
                 logger.error(f"[MCP] Playwright fallback also failed: {pw_error}")
+                # Agent fallback: captura screenshot+ARIA para Claude analisar
+                if AGENT_FALLBACK_AVAILABLE and create_agent_fallback_response:
+                    pw_session_id = session_id or "default"
+                    if pw_session_id in playwright_manager.sessions:
+                        page = playwright_manager.sessions[pw_session_id].page
+                        return await create_agent_fallback_response(page, tool_name, tool_args, str(pw_error))
 
         logger.error(f"[MCP] Error calling tool {tool_name}: {e}")
         return {

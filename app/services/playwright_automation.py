@@ -24,6 +24,8 @@ from datetime import datetime
 from typing import Dict, Optional, Any
 from dataclasses import dataclass, field
 
+from app.services.resilience import smart_query, smart_click, smart_fill, smart_select
+
 logger = logging.getLogger(__name__)
 
 # Lazy import para não falhar se playwright não estiver instalado
@@ -366,19 +368,20 @@ class PlaywrightManager:
             # Navegar para página de login
             await page.goto(url, wait_until='domcontentloaded')
 
-            # Preencher credenciais
-            await page.fill('input[name="txtUsuario"], input[id="txtUsuario"], #usuario', username)
-            await page.fill('input[name="pwdSenha"], input[id="pwdSenha"], #senha', password)
+            # Preencher credenciais (com fail-fast + self-healing)
+            if not await smart_fill(page, 'input[name="txtUsuario"], input[id="txtUsuario"], #usuario', username, context="login:usuario"):
+                return {"success": False, "error": "Campo de usuário não encontrado"}
+
+            if not await smart_fill(page, 'input[name="pwdSenha"], input[id="pwdSenha"], #senha', password, context="login:senha"):
+                return {"success": False, "error": "Campo de senha não encontrado"}
 
             # Selecionar órgão se necessário
             if orgao:
-                try:
-                    await page.select_option('select[name="selOrgao"], #selOrgao', label=orgao)
-                except:
-                    pass  # Órgão pode não existir
+                await smart_select(page, 'select[name="selOrgao"], #selOrgao', label=orgao, context="login:orgao")
 
             # Clicar em login
-            await page.click('button[type="submit"], input[type="submit"], #sbmLogin')
+            if not await smart_click(page, 'button[type="submit"], input[type="submit"], #sbmLogin', context="login:submit"):
+                return {"success": False, "error": "Botão de login não encontrado"}
 
             # Aguardar navegação (domcontentloaded é mais rápido e confiável que networkidle)
             await page.wait_for_load_state('domcontentloaded', timeout=10000)
@@ -411,14 +414,12 @@ class PlaywrightManager:
             return cached
 
         try:
-            # Navegar para pesquisa
-            await page.click('a:has-text("Pesquisa"), #lnkPesquisar')
+            # Navegar para pesquisa (fail-fast + self-healing)
+            await smart_click(page, 'a:has-text("Pesquisa"), #lnkPesquisar', context="search:nav")
             await page.wait_for_load_state('domcontentloaded')
 
             # Preencher busca
-            search_input = await page.query_selector('input[name="txtPesquisa"], #txtPesquisaRapida')
-            if search_input:
-                await search_input.fill(query)
+            if await smart_fill(page, 'input[name="txtPesquisa"], #txtPesquisaRapida', query, context="search:input"):
                 await page.keyboard.press('Enter')
                 await page.wait_for_load_state('domcontentloaded')
 
@@ -489,10 +490,8 @@ class PlaywrightManager:
         page = session.page
 
         try:
-            # Método 1: Pesquisa rápida no topo
-            search_input = await page.query_selector('#txtPesquisaRapida, input[name="txtPesquisaRapida"]')
-            if search_input:
-                await search_input.fill(process_number)
+            # Método 1: Pesquisa rápida no topo (fail-fast + self-healing)
+            if await smart_fill(page, '#txtPesquisaRapida, input[name="txtPesquisaRapida"]', process_number, context="open_process:pesquisa_rapida"):
                 await page.keyboard.press('Enter')
                 await page.wait_for_load_state('domcontentloaded')
 
@@ -502,9 +501,7 @@ class PlaywrightManager:
                     return {"success": True, "message": f"Processo {process_number} aberto", "url": current_url}
 
             # Método 2: Clicar no link do processo se listado
-            process_link = await page.query_selector(f'a:has-text("{process_number}")')
-            if process_link:
-                await process_link.click()
+            if await smart_click(page, f'a:has-text("{process_number}")', context="open_process:link"):
                 await page.wait_for_load_state('domcontentloaded')
                 return {"success": True, "message": f"Processo {process_number} aberto", "url": page.url}
 
@@ -591,12 +588,8 @@ class PlaywrightManager:
                 if not open_result.get("success"):
                     return open_result
 
-            # Clicar em "Consultar Andamento" ou aba similar
-            andamento_link = await page.query_selector(
-                'a:has-text("Consultar Andamento"), a:has-text("Andamento"), #lnkAndamento'
-            )
-            if andamento_link:
-                await andamento_link.click()
+            # Clicar em "Consultar Andamento" ou aba similar (fail-fast + self-healing)
+            if await smart_click(page, 'a:has-text("Consultar Andamento"), a:has-text("Andamento"), #lnkAndamento', context="get_status:andamento"):
                 await page.wait_for_load_state('domcontentloaded')
 
             # Coletar histórico
@@ -613,8 +606,8 @@ class PlaywrightManager:
                     except:
                         continue
 
-            # Tentar extrair status atual
-            status_elem = await page.query_selector('.status-processo, #spanStatus, .situacao')
+            # Tentar extrair status atual (fail-fast + self-healing)
+            status_elem = await smart_query(page, '.status-processo, #spanStatus, .situacao', context="get_status:status_elem")
             status = ""
             if status_elem:
                 status = await status_elem.inner_text()
@@ -652,55 +645,37 @@ class PlaywrightManager:
             if not open_result.get("success"):
                 return open_result
 
-            # Clicar em "Incluir Documento"
-            include_doc = await page.query_selector(
-                'a:has-text("Incluir Documento"), #lnkIncluirDocumento, img[title*="Incluir Documento"]'
-            )
-            if not include_doc:
+            # Clicar em "Incluir Documento" (fail-fast + self-healing)
+            if not await smart_click(page, 'a:has-text("Incluir Documento"), #lnkIncluirDocumento, img[title*="Incluir Documento"]', context="create_doc:incluir"):
                 return {"success": False, "error": "Botão 'Incluir Documento' não encontrado"}
 
-            await include_doc.click()
             await page.wait_for_load_state('domcontentloaded')
 
-            # Selecionar tipo de documento
-            type_input = await page.query_selector(
-                '#txtFiltro, input[name="txtFiltro"], #selTipoDocumento'
-            )
+            # Selecionar tipo de documento (fail-fast + self-healing)
+            type_input = await smart_query(page, '#txtFiltro, input[name="txtFiltro"], #selTipoDocumento', context="create_doc:tipo")
             if type_input:
                 tag_name = await type_input.evaluate('el => el.tagName.toLowerCase()')
                 if tag_name == 'input':
                     await type_input.fill(document_type)
                     await asyncio.sleep(0.5)
                     # Clicar no resultado da busca
-                    type_option = await page.query_selector(f'a:has-text("{document_type}"), li:has-text("{document_type}")')
-                    if type_option:
-                        await type_option.click()
+                    await smart_click(page, f'a:has-text("{document_type}"), li:has-text("{document_type}")', context="create_doc:tipo_option")
                 else:
-                    await page.select_option(type_input, label=document_type)
+                    await page.select_option('#txtFiltro, input[name="txtFiltro"], #selTipoDocumento', label=document_type)
 
             await page.wait_for_load_state('domcontentloaded')
 
             # Preencher descrição se informada
             if description:
-                desc_input = await page.query_selector(
-                    '#txtDescricao, input[name="txtDescricao"], textarea[name="txtDescricao"]'
-                )
-                if desc_input:
-                    await desc_input.fill(description)
+                await smart_fill(page, '#txtDescricao, input[name="txtDescricao"], textarea[name="txtDescricao"]', description, context="create_doc:descricao")
 
             # Selecionar nível de acesso
             nivel_map = {"publico": "0", "restrito": "1", "sigiloso": "2"}
             nivel_value = nivel_map.get(nivel_acesso.lower(), "0")
-            nivel_radio = await page.query_selector(f'input[name="staNivelAcesso"][value="{nivel_value}"]')
-            if nivel_radio:
-                await nivel_radio.click()
+            await smart_click(page, f'input[name="staNivelAcesso"][value="{nivel_value}"]', context="create_doc:nivel_acesso")
 
             # Salvar/Confirmar
-            save_btn = await page.query_selector(
-                'button[type="submit"], input[type="submit"], #btnSalvar, #btnConfirmar'
-            )
-            if save_btn:
-                await save_btn.click()
+            if await smart_click(page, 'button[type="submit"], input[type="submit"], #btnSalvar, #btnConfirmar', context="create_doc:salvar"):
                 await page.wait_for_load_state('domcontentloaded')
 
             # Verificar se criou
@@ -736,45 +711,31 @@ class PlaywrightManager:
         page = session.page
 
         try:
-            # Navegar para o documento se tiver ID
+            # Navegar para o documento se tiver ID (fail-fast + self-healing)
             if document_id:
-                doc_link = await page.query_selector(f'a[href*="id_documento={document_id}"]')
-                if doc_link:
-                    await doc_link.click()
+                if await smart_click(page, f'a[href*="id_documento={document_id}"]', context="sign_doc:nav"):
                     await page.wait_for_load_state('domcontentloaded')
 
             # Clicar em "Assinar"
-            sign_btn = await page.query_selector(
-                'a:has-text("Assinar"), img[title*="Assinar"], #btnAssinar, button:has-text("Assinar")'
-            )
-            if not sign_btn:
+            if not await smart_click(page, 'a:has-text("Assinar"), img[title*="Assinar"], #btnAssinar, button:has-text("Assinar")', context="sign_doc:assinar"):
                 return {"success": False, "error": "Botão de assinatura não encontrado"}
 
-            await sign_btn.click()
             await page.wait_for_load_state('domcontentloaded')
 
             # Preencher senha
-            pwd_input = await page.query_selector(
-                'input[type="password"], #pwdSenha, input[name="pwdSenha"]'
-            )
-            if pwd_input:
-                await pwd_input.fill(password)
+            await smart_fill(page, 'input[type="password"], #pwdSenha, input[name="pwdSenha"]', password, context="sign_doc:senha")
 
             # Confirmar assinatura
-            confirm_btn = await page.query_selector(
-                'button[type="submit"]:has-text("Assinar"), #btnConfirmar, input[value="Assinar"]'
-            )
-            if confirm_btn:
-                await confirm_btn.click()
+            if await smart_click(page, 'button[type="submit"]:has-text("Assinar"), #btnConfirmar, input[value="Assinar"]', context="sign_doc:confirmar"):
                 await page.wait_for_load_state('domcontentloaded')
 
             # Verificar sucesso
-            success_msg = await page.query_selector('.alert-success, .mensagem-sucesso, :has-text("assinado com sucesso")')
+            success_msg = await smart_query(page, '.alert-success, .mensagem-sucesso, :has-text("assinado com sucesso")', context="sign_doc:success_msg")
             if success_msg:
                 return {"success": True, "message": "Documento assinado com sucesso"}
 
             # Verificar erro
-            error_msg = await page.query_selector('.alert-danger, .mensagem-erro, .infraException')
+            error_msg = await smart_query(page, '.alert-danger, .mensagem-erro, .infraException', context="sign_doc:error_msg")
             if error_msg:
                 error_text = await error_msg.inner_text()
                 return {"success": False, "error": error_text.strip()}
@@ -803,54 +764,34 @@ class PlaywrightManager:
             if not open_result.get("success"):
                 return open_result
 
-            # Clicar em "Enviar Processo"
-            send_btn = await page.query_selector(
-                'a:has-text("Enviar Processo"), img[title*="Enviar"], #lnkEnviarProcesso'
-            )
-            if not send_btn:
+            # Clicar em "Enviar Processo" (fail-fast + self-healing)
+            if not await smart_click(page, 'a:has-text("Enviar Processo"), img[title*="Enviar"], #lnkEnviarProcesso', context="forward:enviar"):
                 return {"success": False, "error": "Botão 'Enviar Processo' não encontrado"}
 
-            await send_btn.click()
             await page.wait_for_load_state('domcontentloaded')
 
             # Selecionar unidade destino
-            unit_input = await page.query_selector(
-                '#txtUnidade, input[name="txtUnidade"], #selUnidadesDestino'
-            )
+            unit_input = await smart_query(page, '#txtUnidade, input[name="txtUnidade"], #selUnidadesDestino', context="forward:unidade")
             if unit_input:
                 tag_name = await unit_input.evaluate('el => el.tagName.toLowerCase()')
                 if tag_name == 'input':
                     await unit_input.fill(target_unit)
                     await asyncio.sleep(0.5)
                     # Clicar na sugestão
-                    suggestion = await page.query_selector(f'.autocomplete-suggestion:has-text("{target_unit}"), li:has-text("{target_unit}")')
-                    if suggestion:
-                        await suggestion.click()
+                    await smart_click(page, f'.autocomplete-suggestion:has-text("{target_unit}"), li:has-text("{target_unit}")', context="forward:sugestao")
                 else:
-                    await page.select_option(unit_input, label=target_unit)
+                    await page.select_option('#txtUnidade, input[name="txtUnidade"], #selUnidadesDestino', label=target_unit)
 
             # Manter aberto na unidade atual
             if keep_open:
-                keep_checkbox = await page.query_selector(
-                    '#chkManterAberto, input[name="chkManterAberto"]'
-                )
-                if keep_checkbox:
-                    await keep_checkbox.check()
+                await smart_click(page, '#chkManterAberto, input[name="chkManterAberto"]', context="forward:manter_aberto")
 
             # Adicionar observação
             if note:
-                note_input = await page.query_selector(
-                    '#txtObservacao, textarea[name="txtObservacao"]'
-                )
-                if note_input:
-                    await note_input.fill(note)
+                await smart_fill(page, '#txtObservacao, textarea[name="txtObservacao"]', note, context="forward:observacao")
 
             # Enviar
-            submit_btn = await page.query_selector(
-                'button[type="submit"], #btnEnviar, input[value="Enviar"]'
-            )
-            if submit_btn:
-                await submit_btn.click()
+            if await smart_click(page, 'button[type="submit"], #btnEnviar, input[value="Enviar"]', context="forward:submit"):
                 await page.wait_for_load_state('domcontentloaded')
 
             return {"success": True, "message": f"Processo tramitado para {target_unit}"}
@@ -888,9 +829,10 @@ class PlaywrightManager:
         page = session.page
 
         try:
-            await page.click(selector)
-            await page.wait_for_load_state('domcontentloaded')
-            return {"success": True, "message": f"Clicado em {selector}"}
+            if await smart_click(page, selector, context=f"click:{selector[:30]}"):
+                await page.wait_for_load_state('domcontentloaded')
+                return {"success": True, "message": f"Clicado em {selector}"}
+            return {"success": False, "error": f"Elemento não encontrado: {selector}"}
         except Exception as e:
             return {"success": False, "error": str(e)}
 
@@ -903,8 +845,9 @@ class PlaywrightManager:
         page = session.page
 
         try:
-            await page.fill(selector, value)
-            return {"success": True, "message": f"Campo {selector} preenchido"}
+            if await smart_fill(page, selector, value, context=f"fill:{selector[:30]}"):
+                return {"success": True, "message": f"Campo {selector} preenchido"}
+            return {"success": False, "error": f"Campo não encontrado: {selector}"}
         except Exception as e:
             return {"success": False, "error": str(e)}
 
@@ -917,11 +860,8 @@ class PlaywrightManager:
         page = session.page
 
         try:
-            logout_btn = await page.query_selector(
-                'a:has-text("Sair"), #lnkSair, a[href*="logout"], img[title*="Sair"]'
-            )
-            if logout_btn:
-                await logout_btn.click()
+            # Clicar em sair (fail-fast + self-healing)
+            if await smart_click(page, 'a:has-text("Sair"), #lnkSair, a[href*="logout"], img[title*="Sair"]', context="logout:sair"):
                 await page.wait_for_load_state('domcontentloaded')
 
             session.logged_in = False
