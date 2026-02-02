@@ -1,5 +1,41 @@
 # AI Log - SEI Tribunais Licensing API
 
+## 2026-02-02 - Feat: Camada de Resiliência (Fail-Fast, Self-Healing, Agent Fallback)
+
+### Objetivo
+Adicionar resiliência à automação Playwright do SEI para que seletores CSS quebrados sejam detectados rapidamente e corrigidos automaticamente.
+
+### Arquivos Criados
+- `app/services/resilience.py` — Motor de resiliência com:
+  - `SelectorStore`: persistência JSON de seletores descobertos (~/.sei-mcp/selector-cache.json)
+  - `fail_fast()`: timeout curto (3s) antes de tentar próximo método
+  - `smart_query/click/fill/select`: cascata CSS → Store → Agent LLM
+  - `_agent_find_selector()`: Claude API analisa screenshot+DOM quando tudo falha
+  - `create_agent_fallback_response()`: resposta com screenshot+ARIA para Claude analisar
+
+### Arquivos Modificados
+- `app/services/playwright_automation.py` — Todos os métodos agora usam smart helpers:
+  - login, search_process, open_process, list_documents, get_status
+  - create_document, sign_document, forward_process, logout
+  - click, fill (genéricos)
+- `app/api/endpoints/mcp_server.py` — Agent fallback quando Extension + Playwright falham
+- `requirements.txt` — Adicionado `anthropic>=0.39.0`
+- `.env.example` — Documentação das novas variáveis de ambiente
+
+### Configuração (env vars)
+- `AGENT_FALLBACK_ENABLED=false` (desativado por padrão)
+- `ANTHROPIC_API_KEY` — chave da API Anthropic
+- `RESILIENCE_FAIL_FAST_MS=3000` — timeout fail-fast em ms
+- `RESILIENCE_MAX_RETRIES=2` — tentativas com backoff
+- `SELECTOR_STORE_PATH` — caminho do cache JSON
+
+### Decisões
+- Smart helpers são opt-in: sem AGENT_FALLBACK_ENABLED, funciona com cascata CSS→Store apenas
+- Agent fallback usa screenshot JPEG 50% qualidade + DOM simplificado (max 5000 chars) para economia
+- Selector store usa debounce em recordSuccess mas save imediato em set()
+
+---
+
 ## 2026-01-26 - Fix: OAuth e Checkout Validation
 
 ### Problemas Resolvidos
