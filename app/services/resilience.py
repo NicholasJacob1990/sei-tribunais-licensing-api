@@ -26,6 +26,9 @@ logger = logging.getLogger(__name__)
 FAIL_FAST_TIMEOUT_MS = int(os.environ.get("RESILIENCE_FAIL_FAST_MS", "3000"))
 MAX_RETRIES = int(os.environ.get("RESILIENCE_MAX_RETRIES", "2"))
 RETRY_BACKOFF_MS = int(os.environ.get("RESILIENCE_RETRY_BACKOFF_MS", "500"))
+# LLM selector discovery: chama Claude API para sugerir seletor alternativo.
+# Desativado por padrão — ativar APENAS em contextos de execução autônoma (sem Claude como caller).
+# Se o caller já é Claude (Desktop/chatbot), isso é redundante (Claude chamando Claude).
 AGENT_FALLBACK_ENABLED = os.environ.get("AGENT_FALLBACK_ENABLED", "false").lower() == "true"
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 AGENT_MODEL = os.environ.get("AGENT_FALLBACK_MODEL", "claude-sonnet-4-20250514")
